@@ -1,51 +1,12 @@
-"""
-ETAPA 2 — Limpieza de datos.
-
-Se ejecuta DESPUÉS de la ingesta (nasa_power.py, chirps.py, openaq/sinaica.py, ...)
-y ANTES de build_master_table.py.
-
-REGLA DE ORO: data/processed/ es SOLO LECTURA en este script. Nunca se
-sobreescribe. Los datos limpios se escriben en data/master/, con el mismo
-esquema de particionado hive (source=X/year=Y) que ya usas en processed,
-para que sigan siendo baratos de leer por año/fuente más adelante.
-
-    data/processed/nasa_power.parquet/source=nasa_power/year=2020/...   (RAW, intocable)
-    data/processed/chirps.parquet/source=chirps/year=2020/...           (RAW, intocable)
-    data/processed/openaq.parquet/source=openaq/year=2020/...           (RAW, intocable)
-                              │
-                              ▼  clean_dynamic_source()
-    data/master/nasa_power.parquet/source=nasa_power/year=2020/...      (LIMPIO)
-    data/master/chirps.parquet/source=chirps/year=2020/...              (LIMPIO)
-    data/master/openaq.parquet/source=openaq/year=2020/...              (LIMPIO)
-    data/master/poblacion.parquet                                      (LIMPIO, estática, sin partición)
-    data/master/elevacion.parquet
-    data/master/distancia_rio.parquet
-    data/master/municipios_geom.parquet
-    data/master/cenapred_ciclones.parquet
-
-build_master_table.py debe apuntar sus lecturas a data/master/, no a
-data/processed/, una vez que este script haya corrido.
-
-Qué limpia cada fuente dinámica (mismo criterio ya validado antes):
-
-  NASA POWER  -> sentinelas -999, rangos físicos, T2M_MAX<T2M_MIN, dedupe
-  CHIRPS      -> fechas string->datetime, precipitación negativa/extrema, dedupe
-  OpenAQ/SINAICA (PM2.5) -> rangos físicos, flag de valores sospechosos >500, dedupe
-
-Nada se elimina por estar fuera de rango: se pone en NaN + se deja una
-columna `<col>_flag_outlier` (o `_flag_sospechoso` para PM2.5) como
-evidencia, porque para Isolation Forest / XGBoost más adelante es más útil
-saber "esto se corrigió" que perder la fila completa.
-"""
-
 from __future__ import annotations
-
 import logging
 import sys
 from pathlib import Path
-
+import pyarrow.dataset as ds
 import numpy as np
 import pandas as pd
+from shapely import wkt as shapely_wkt
+from shapely.geometry.base import BaseGeometry
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from config.settings import (
@@ -61,6 +22,18 @@ from src.utils.io_utils import save_parquet
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
+try:
+    from config.settings import BBOX_AGS
+except ImportError:
+    BBOX_AGS = None
+    logger.warning("config.settings no tiene BBOX_AGS: se omite validación de bounding box de geometrías")
+
+try:
+    from config.settings import INEGI_MUNICIPIOS_AGS
+except ImportError:
+    INEGI_MUNICIPIOS_AGS = None
+    logger.warning("config.settings no tiene INEGI_MUNICIPIOS_AGS: se omite validación de claves AGEM")
+
 MUNICIPIOS_VALIDOS = set(MUNICIPIOS_AGS.keys())
 
 RANGOS_NASA = {
@@ -70,13 +43,12 @@ RANGOS_NASA = {
     "RH2M":                (0, 100),
     "WS2M":                 (0, 40),      # m/s
     "ALLSKY_SFC_SW_DWN":    (0, 40),      # MJ/m2/día
-    "PS":                  (65, 95),      # kPa, ajustado a 1900 msnm
+    "PS":                  (65, 95),      # kPa, ajustado a ~1900 msnm
     "PRECTOTCORR":          (0, 300),     # mm/día
 }
 RANGO_CHIRPS = (0, 300)          # mm/día
 RANGO_PM25 = (0, 1200)           # µg/m3
 PM25_FLAG_SOSPECHOSO = 500       # marca, no borra
-
 
 
 def parse_dates(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
@@ -85,7 +57,7 @@ def parse_dates(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
     df[col] = pd.to_datetime(df[col], errors="coerce")
     nuevos_na = df[col].isna().sum() - before_na
     if nuevos_na > 0:
-        logger.warning(f"{nuevos_na} fechas no parseables NaT (se dropean)")
+        logger.warning(f"{nuevos_na} fechas no parseables -> NaT (se dropean)")
         df = df.dropna(subset=[col])
     return df
 
@@ -162,10 +134,6 @@ def coverage_report(
         logger.info(f"[{fuente}] municipios con menos días cubiertos: {dict(cobertura_por_municipio.head(3))}")
 
 
-# ──────────────────────────────────────────────────────────────
-# Limpieza específica por fuente
-# ──────────────────────────────────────────────────────────────
-
 def clean_nasa_power(df: pd.DataFrame) -> pd.DataFrame:
     fuente = "nasa_power"
     df = parse_dates(df, "date")
@@ -226,12 +194,6 @@ def clean_openaq(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def clean_static_table(df: pd.DataFrame, fuente: str) -> pd.DataFrame:
-    """
-    Población, elevación, distancia a río, geometrías, CENAPRED: solo valida
-    catálogo. No todas usan la misma columna de municipio (ej. CENAPRED trae
-    'MPO_LEY' en vez de 'municipio'), así que se detecta cuál usar en vez de
-    asumirla y tronar.
-    """
     col_municipio = "municipio" if "municipio" in df.columns else None
     if col_municipio is None:
         for candidata in ("MPO_LEY", "NOM_MUN", "nom_agem"):
@@ -253,38 +215,163 @@ def clean_static_table(df: pd.DataFrame, fuente: str) -> pd.DataFrame:
     return df
 
 
-# ──────────────────────────────────────────────────────────────
-# Orquestador
-# ──────────────────────────────────────────────────────────────
+def clean_municipios_geom(df: pd.DataFrame) -> pd.DataFrame:
+    fuente = "municipios_geom"
+    df = df.copy()
+    df = check_municipio_names(df, fuente=fuente)
 
-# nombre de carpeta/archivo -> (función de limpieza, tag de 'source' para particionar)
+    if "geometry_wkt" not in df.columns:
+        logger.error(f"[{fuente}] No existe columna 'geometry_wkt', no se puede validar geometría")
+        return df
+
+    geoms: list[BaseGeometry | None] = []
+    validas = []
+    tipos_ok = []
+    centroides_en_bbox = []
+
+    for wkt_str in df["geometry_wkt"]:
+        geom = None
+        es_valida = False
+        try:
+            if pd.isna(wkt_str) or not str(wkt_str).strip():
+                raise ValueError("WKT vacío")
+            geom = shapely_wkt.loads(wkt_str)
+            es_valida = geom.is_valid and not geom.is_empty
+        except Exception as e:
+            logger.error(f"[{fuente}] WKT no parseable: {e}")
+        geoms.append(geom)
+        validas.append(es_valida)
+
+        tipo_ok = geom is not None and geom.geom_type in ("Polygon", "MultiPolygon")
+        tipos_ok.append(tipo_ok)
+
+        if geom is not None and es_valida and BBOX_AGS is not None:
+            c = geom.centroid
+            dentro = (
+                BBOX_AGS["lon_min"] <= c.x <= BBOX_AGS["lon_max"]
+                and BBOX_AGS["lat_min"] <= c.y <= BBOX_AGS["lat_max"]
+            )
+            centroides_en_bbox.append(dentro)
+        else:
+            centroides_en_bbox.append(None)
+
+    df["geom_flag_valida"] = validas
+    df["geom_flag_tipo_correcto"] = tipos_ok
+    if BBOX_AGS is not None:
+        df["geom_flag_centroide_en_bbox"] = centroides_en_bbox
+
+    n_invalidas = (~pd.Series(validas)).sum()
+    n_tipo_malo = (~pd.Series(tipos_ok)).sum()
+    if n_invalidas > 0:
+        logger.error(f"[{fuente}] {n_invalidas} geometrías inválidas o vacías (ver geom_flag_valida)")
+    if n_tipo_malo > 0:
+        logger.error(f"[{fuente}] {n_tipo_malo} geometrías que no son Polygon/MultiPolygon (ver geom_flag_tipo_correcto)")
+    if BBOX_AGS is not None:
+        n_fuera_bbox = sum(v is False for v in centroides_en_bbox)
+        if n_fuera_bbox > 0:
+            logger.error(
+                f"[{fuente}] {n_fuera_bbox} centroides FUERA del bounding box de Aguascalientes "
+                f"-> revisar CRS/coordenadas (ver geom_flag_centroide_en_bbox)"
+            )
+
+    if INEGI_MUNICIPIOS_AGS is not None and "cve_agem" in df.columns and "municipio" in df.columns:
+        esperado = df["municipio"].map(INEGI_MUNICIPIOS_AGS)
+        mismatch = esperado.notna() & (esperado != df["cve_agem"].astype(str))
+        n_mismatch = mismatch.sum()
+        if n_mismatch > 0:
+            logger.error(
+                f"[{fuente}] {n_mismatch} filas con cve_agem que NO coincide con el catálogo "
+                f"INEGI_MUNICIPIOS_AGS (revisar: {df.loc[mismatch, ['municipio', 'cve_agem']].to_dict('records')})"
+            )
+        df["geom_flag_cve_agem_ok"] = ~mismatch
+
+    df = drop_duplicates_report(df, subset=["municipio"], fuente=fuente)
+    return df
+
+
+def clean_cenapred(df: pd.DataFrame) -> pd.DataFrame:
+    fuente = "cenapred_ciclones"
+    df = df.copy()
+
+    if "EDO_LEY" in df.columns:
+        n_antes = len(df)
+        df = df[df["EDO_LEY"].astype(str) == "Aguascalientes"].copy()
+        n_fuera = n_antes - len(df)
+        if n_fuera > 0:
+            logger.warning(f"[{fuente}] {n_fuera} filas de otros estados eliminadas (EDO_LEY != Aguascalientes)")
+
+    if "MPO_LEY" in df.columns:
+        df = check_municipio_names(df, col="MPO_LEY", fuente=fuente)
+
+    if "AREA" in df.columns:
+        mask_area_mala = df["AREA"] <= 0
+        n_area_mala = mask_area_mala.sum()
+        df["cenapred_flag_area_invalida"] = mask_area_mala
+        if n_area_mala > 0:
+            logger.error(f"[{fuente}] {n_area_mala} filas con AREA <= 0 (dato corrupto, ver cenapred_flag_area_invalida)")
+
+    if "Ciclones_f" in df.columns:
+        valores_validos = {0, 1}
+        vals = pd.to_numeric(df["Ciclones_f"], errors="coerce")
+        mask_invalida = ~vals.isin(valores_validos)
+        n_invalida = mask_invalida.sum()
+        if n_invalida > 0:
+            logger.warning(
+                f"[{fuente}] {n_invalida} valores de 'Ciclones_f' fuera de {{0,1}} -> "
+                f"se dejan en NaN en vez de asumir 0 (ver cenapred_flag_ciclones_valor_raro)"
+            )
+        df["cenapred_flag_ciclones_valor_raro"] = mask_invalida
+        vals[mask_invalida] = np.nan
+        df["Ciclones_f"] = vals
+
+    subset_dedupe = [c for c in ("FID",) if c in df.columns] or [
+        c for c in ("MPO_LEY", "layer_name") if c in df.columns
+    ]
+    if subset_dedupe:
+        df = drop_duplicates_report(df, subset=subset_dedupe, fuente=fuente)
+
+    return df
+
 FUENTES_DINAMICAS = {
     "nasa_power": (clean_nasa_power, "nasa_power"),
     "chirps": (clean_chirps, "chirps"),
     "openaq": (clean_openaq, "openaq"),
 }
 
-# tablas estáticas: sin fecha, sin partición, un archivo plano en data/master
 FUENTES_ESTATICAS = [
     "poblacion",
     "elevacion",
-    "distancia_rio",
-    "municipios_geom",       # ajusta el nombre si tu archivo INEGI se llama distinto
-    "cenapred_ciclones",     # ajusta el nombre si tu archivo CENAPRED se llama distinto
+    "rios",
+    "geometria_municipios",    
+    "ciclones",     
 ]
 
-
 def _read_processed(nombre: str) -> pd.DataFrame | None:
-    """
-    Lee data/processed/<nombre>.parquet, sea un archivo plano o un dataset
-    particionado hive (source=X/year=Y/*.parquet). pyarrow detecta ambos
-    casos automáticamente al recibir la ruta del directorio/archivo.
-    """
-    path = PROCESSED_DIR / f"{nombre}.parquet"
+    MAPEO_RUTAS = {
+        "elevacion": PROCESSED_DIR / "inegi.parquet" / "elevacion.parquet",
+        "poblacion": PROCESSED_DIR / "inegi.parquet" / "poblacion.parquet",
+        "rios": PROCESSED_DIR / "inegi.parquet" / "rios.parquet",
+        "geometria_municipios": PROCESSED_DIR / "inegi.parquet" / "geometria_municipios.parquet",
+        "ciclones": PROCESSED_DIR / "cenapred.parquet" / "ciclones.parquet",
+        "cenapred_ciclones": PROCESSED_DIR / "cenapred.parquet" / "ciclones.parquet",
+    }
+    
+    if nombre in MAPEO_RUTAS:
+        path = MAPEO_RUTAS[nombre]
+    else:
+        path = PROCESSED_DIR / f"{nombre}.parquet"
     if not path.exists():
         logger.warning(f"No existe {path}, se omite")
         return None
-    return pd.read_parquet(path, engine="pyarrow")
+    try:
+        if path.is_dir():
+            dataset = ds.dataset(path, format="parquet")
+            return dataset.to_table().to_pandas()
+        else:
+            return pd.read_parquet(path, engine="pyarrow")
+    except Exception as e:
+        logger.error(f"Error al leer {path}: {e}")
+        return None
 
 
 def clean_dynamic_source(nombre: str, cleaner_fn, source_tag: str) -> pd.DataFrame | None:
@@ -294,9 +381,6 @@ def clean_dynamic_source(nombre: str, cleaner_fn, source_tag: str) -> pd.DataFra
 
     logger.info(f"--- Limpiando {nombre} ({len(df)} filas antes, leído de data/processed/) ---")
     df_limpio = cleaner_fn(df)
-
-    # recalcular year/source explícitos para particionar de forma consistente,
-    # sin depender de que ya vinieran bien como columnas de partición al leer
     df_limpio = df_limpio.copy()
     df_limpio["year"] = df_limpio["date"].dt.year
     df_limpio["source"] = source_tag
