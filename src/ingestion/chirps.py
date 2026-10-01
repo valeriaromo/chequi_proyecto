@@ -1,13 +1,16 @@
 from __future__ import annotations
+
 import argparse
 import gzip
 import logging
+import shutil
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import rasterio
@@ -18,11 +21,19 @@ from rasterio.transform import rowcol
 from rasterio.windows import Window, from_bounds
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from config.settings import (CHIRPS_DAILY_COG_TEMPLATE,FECHA_FIN,FECHA_INICIO,MUNICIPIOS_AGS,PARQUET_COMPRESSION,PROCESSED_DIR,)
-from src.utils.geo_utils import bbox_window, load_municipios_geom  
-from src.utils.io_utils import save_parquet  
+from config.settings import (  # noqa: E402
+    CHIRPS_DAILY_COG_TEMPLATE,
+    FECHA_FIN,
+    FECHA_INICIO,
+    MUNICIPIOS_AGS,
+    PARQUET_COMPRESSION,
+    PROCESSED_DIR,
+)
+from src.utils.geo_utils import bbox_window, load_municipios_geom  # noqa: E402
+from src.utils.io_utils import save_parquet  # noqa: E402
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-logger = logging.getLogger("chirps") 
+logger = logging.getLogger("chirps")
 
 SOURCE = "chirps"
 OUT_PATH = PROCESSED_DIR / "chirps.parquet"
@@ -36,15 +47,30 @@ def _to_date(v) -> date:
         return v
     return date.fromisoformat(str(v)[:10])
 
-DEFAULT_START = _to_date(FECHA_INICIO)
-DEFAULT_END = min(_to_date(FECHA_FIN), date.today() - timedelta(days=1)) # recorta la fecha a ayer porque chirps tiene latencia de 1 día
 
-HTTP_HEADERS = {"User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ""(KHTML, like Gecko) "
-                "Chrome/124.0 Safari/537.36"),"Accept": "*/*",}
-GDAL_ENV = {"GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR","CPL_VSIL_CURL_USE_HEAD": "NO","VSI_CACHE": "TRUE",
-    "GDAL_HTTP_USERAGENT": HTTP_HEADERS["User-Agent"],"GDAL_HTTP_TIMEOUT": "30","GDAL_HTTP_MAX_RETRY": "2",
-    "GDAL_HTTP_RETRY_DELAY": "1","GDAL_INGESTED_BYTES_AT_OPEN": "65536",  # para que el cache de vsicurl no se llene con el .gz completo
-    "CPL_VSIL_CURL_CACHE_SIZE": "200000000","GDAL_HTTP_MULTIPLEX": "YES","GDAL_HTTP_VERSION": "2",
+# Fuente de verdad: settings. Se recorta a ayer porque CHIRPS no publica el día en curso.
+DEFAULT_START = _to_date(FECHA_INICIO)
+DEFAULT_END = min(_to_date(FECHA_FIN), date.today() - timedelta(days=1))
+
+HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Accept": "*/*",
+}
+GDAL_ENV = {
+    "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+    "CPL_VSIL_CURL_USE_HEAD": "NO",
+    "VSI_CACHE": "TRUE",
+    "GDAL_HTTP_USERAGENT": HTTP_HEADERS["User-Agent"],
+    "GDAL_HTTP_TIMEOUT": "30",
+    "GDAL_HTTP_MAX_RETRY": "2",
+    "GDAL_HTTP_RETRY_DELAY": "1",
+    "GDAL_INGESTED_BYTES_AT_OPEN": "65536",  # header del COG en un solo request
+    "CPL_VSIL_CURL_CACHE_SIZE": "200000000",
+    "GDAL_HTTP_MULTIPLEX": "YES",
+    "GDAL_HTTP_VERSION": "2",
 }
 MAX_RETRIES = 3
 REQUEST_TIMEOUT_S = 30
@@ -53,35 +79,49 @@ TIFF_MAGICS = (b"II*\x00", b"MM\x00*")
 
 RasterWindow = tuple[np.ndarray, "rasterio.Affine", "rasterio.crs.CRS"]
 
+
+# ─────────────────────────── URLs / bytes ───────────────────────────
+
 def _daily_url(d: date, gz: bool = True) -> str:
     url = CHIRPS_DAILY_COG_TEMPLATE.format(year=d.year, month=d.month, day=d.day)
     if gz:
         return url
     return url[:-3] if url.endswith(".gz") else url
 
+
 def _url_variants(d: date) -> list[str]:
+    """URL del template primero; la variante alterna solo si realmente es distinta."""
     urls = [_daily_url(d, gz=True), _daily_url(d, gz=False)]
     return list(dict.fromkeys(urls))
 
+
 def _vsi_path(url: str) -> str:
+    # .tif directo => range requests sobre el COG (solo baja la ventana); .gz => stream completo
     return f"/vsigzip//vsicurl/{url}" if url.endswith(".gz") else f"/vsicurl/{url}"
+
 
 def _looks_like_tiff(content: bytes) -> bool:
     return content[:4] in TIFF_MAGICS
 
+
 def _maybe_gunzip(content: bytes) -> bytes:
     return gzip.decompress(content) if content[:2] == GZIP_MAGIC else content
 
+
+# ─────────────────────────── Lectura de raster ───────────────────────────
+
 def _read_window(src: rasterio.DatasetReader) -> RasterWindow | None:
+    """Lee la ventana del bbox alineada a píxeles enteros (transform consistente con los datos)."""
     minx, miny, maxx, maxy = bbox_window()
     w = from_bounds(minx, miny, maxx, maxy, transform=src.transform)
     col0, row0 = int(np.floor(w.col_off)), int(np.floor(w.row_off))
     col1, row1 = int(np.ceil(w.col_off + w.width)), int(np.ceil(w.row_off + w.height))
     win = Window(col0, row0, col1 - col0, row1 - row0)
+
     data = src.read(1, window=win).astype("float32")
     if src.nodata is not None:
         data[data == src.nodata] = np.nan
-    data[data < 0] = np.nan  # elimina sentinelas negativos (CHIRPS usa -9999 y -1 para nodata)
+    data[data < 0] = np.nan  # sentinela -9999 aunque el tag nodata falte; precipitación no puede ser negativa
     if np.isnan(data).all():
         logger.warning("ventana completamente nodata")
         return None
@@ -89,6 +129,7 @@ def _read_window(src: rasterio.DatasetReader) -> RasterWindow | None:
 
 
 def _read_remote(d: date) -> RasterWindow | None:
+    """Lectura remota vía GDAL. Prueba .tif.gz (vsigzip) y .tif (COG directo)."""
     for url in _url_variants(d):
         path = _vsi_path(url)
         try:
@@ -96,7 +137,7 @@ def _read_remote(d: date) -> RasterWindow | None:
                 result = _read_window(src)
                 if result is not None:
                     return result
-        except Exception as e:  
+        except Exception as e:  # RasterioIOError, errores GDAL, etc.
             logger.debug("vsicurl falló (%s): %s", path, e)
     return None
 
@@ -122,10 +163,11 @@ def _download_bytes(d: date, session: requests.Session) -> bytes | None:
                     logger.warning("CHIRPS %s: 200 pero no es TIFF (%r)", url, content[:20])
                     break
                 return content
-            except (requests.RequestException, OSError, EOFError) as e:
+            except (requests.RequestException, OSError, EOFError) as e:  # OSError cubre BadGzipFile
                 logger.warning("CHIRPS intento %d/%d falló (%s): %s", attempt, MAX_RETRIES, url, e)
                 time.sleep(2 * attempt)
     return None
+
 
 def _read_from_bytes(content: bytes) -> RasterWindow | None:
     try:
@@ -134,6 +176,7 @@ def _read_from_bytes(content: bytes) -> RasterWindow | None:
     except Exception as e:
         logger.error("CHIRPS: no se pudo leer el raster en memoria: %s", e)
         return None
+
 
 def _read_window_for_date(d: date, method: str, session: requests.Session) -> RasterWindow | None:
     if method in ("auto", "vsicurl"):
@@ -144,9 +187,14 @@ def _read_window_for_date(d: date, method: str, session: requests.Session) -> Ra
     content = _download_bytes(d, session)
     return None if content is None else _read_from_bytes(content)
 
+
+# ─────────────────────────── Zonal stats ───────────────────────────
+
 _MASK_CACHE: dict[tuple, dict[str, np.ndarray]] = {}
 
+
 def _get_masks(shape: tuple[int, int], transform, crs) -> dict[str, np.ndarray]:
+    """Máscaras booleanas por municipio. La grilla CHIRPS es fija, así que se calculan una sola vez."""
     key = (shape, tuple(transform)[:6], str(crs))
     if key in _MASK_CACHE:
         return _MASK_CACHE[key]
@@ -162,22 +210,27 @@ def _get_masks(shape: tuple[int, int], transform, crs) -> dict[str, np.ndarray]:
         geom = row["geometry"]
         m = geometry_mask([geom], out_shape=shape, transform=transform, all_touched=True, invert=True)
         if not m.any():
+            # municipio más chico que un píxel y fuera del alcance de all_touched: píxel del punto representativo
             pt = geom.representative_point()
-            # para municipios muy pequeños que no intersectan la ventana, se toma el punto representativo y se marca el pixel más cercano
             r, c = rowcol(transform, pt.x, pt.y)
             if 0 <= r < shape[0] and 0 <= c < shape[1]:
                 m[r, c] = True
             else:
                 logger.warning("%s no intersecta la ventana", row["municipio"])
         masks[row["municipio"]] = m
+
     _MASK_CACHE.clear()
     _MASK_CACHE[key] = masks
     return masks
+
+
 _MASK_LOCK = threading.Lock()
+
 
 def _get_masks_safe(shape, transform, crs) -> dict[str, np.ndarray]:
     with _MASK_LOCK:
         return _get_masks(shape, transform, crs)
+
 
 def _extract_municipio_values(data: np.ndarray, transform, crs) -> dict[str, float]:
     masks = _get_masks_safe(data.shape, transform, crs)
@@ -187,6 +240,9 @@ def _extract_municipio_values(data: np.ndarray, transform, crs) -> dict[str, flo
         vals = vals[~np.isnan(vals)]
         out[mun] = float(vals.mean()) if vals.size else np.nan
     return out
+
+
+# ─────────────────────────── Validaciones / guardado ───────────────────────────
 
 def _check_prereqs() -> None:
     if not GEOM_PATH.exists():
@@ -202,7 +258,51 @@ def _check_prereqs() -> None:
             f"solo en catálogo: {sorted(catalog - geom_names)}"
         )
 
+
+def _write_year_partition(df: pd.DataFrame, year: int) -> None:
+    """Reemplaza la partición del año. save_parquet solo AGREGA archivos (nunca borra los previos),
+    por eso se escribe a un dir temporal y se intercambia la partición completa."""
+    tmp_root = OUT_PATH.with_name(f"{OUT_PATH.name}.tmp")
+    if tmp_root.exists():
+        shutil.rmtree(tmp_root)
+    save_parquet(df, tmp_root, partition_cols=["source", "year"], compression=PARQUET_COMPRESSION)
+
+    new_part = tmp_root / f"source={SOURCE}" / f"year={year}"
+    final_part = OUT_PATH / f"source={SOURCE}" / f"year={year}"
+    bak = OUT_PATH.with_name(f"{OUT_PATH.name}.bak_{year}")  # fuera del dataset para no ensuciar lecturas
+    final_part.parent.mkdir(parents=True, exist_ok=True)
+    if bak.exists():
+        shutil.rmtree(bak)
+    if final_part.exists():
+        final_part.rename(bak)
+    new_part.rename(final_part)
+    shutil.rmtree(bak, ignore_errors=True)
+    shutil.rmtree(tmp_root, ignore_errors=True)
+
+
+def repair_duplicates() -> None:
+    """Una sola vez: colapsa duplicados (date, municipio) ya existentes en disco y reescribe cada año."""
+    if not OUT_PATH.exists():
+        logger.error("No existe %s", OUT_PATH)
+        return
+    df = pd.read_parquet(OUT_PATH)
+    df["date"] = pd.to_datetime(df["date"])
+    df["source"] = SOURCE
+    df["year"] = df["date"].dt.year.astype(int)
+
+    dup = df[df.duplicated(["date", "municipio"], keep=False)]
+    spread = dup.groupby(["date", "municipio"])["precipitation_mm"].agg(lambda x: x.max() - x.min())
+    logger.info("duplicados: %d pares; con valores distintos: %d", len(spread), int((spread.fillna(0) > 1e-6).sum()))
+
+    n0 = len(df)
+    df = df.drop_duplicates(["date", "municipio"], keep="last").sort_values(["date", "municipio"])
+    for y, g in df.groupby("year"):
+        _write_year_partition(g.reset_index(drop=True), int(y))
+    logger.info("repair: %d -> %d filas", n0, len(df))
+
+
 def _save_year(df: pd.DataFrame, year: int) -> None:
+    """Guarda el año sin pisar días ya ingestados: fusiona con la partición existente y deduplica."""
     if OUT_PATH.exists():
         old = pd.read_parquet(OUT_PATH, filters=[("year", "==", year)])
         if not old.empty:
@@ -213,8 +313,11 @@ def _save_year(df: pd.DataFrame, year: int) -> None:
             df["source"] = SOURCE
             df["year"] = year
     df = df.sort_values(["date", "municipio"]).reset_index(drop=True)
-    save_parquet(df, OUT_PATH, partition_cols=["source", "year"], compression=PARQUET_COMPRESSION)
+    _write_year_partition(df, year)
     logger.info("CHIRPS %d: %d filas guardadas", year, len(df))
+
+
+# ─────────────────────────── Ingesta ───────────────────────────
 
 _tls = threading.local()
 
@@ -224,6 +327,7 @@ def _session() -> requests.Session:
         _tls.s = requests.Session()
         _tls.s.headers.update(HTTP_HEADERS)
     return _tls.s
+
 
 def _existing_dates(year: int) -> set[date]:
     if not OUT_PATH.exists():
@@ -235,6 +339,7 @@ def _existing_dates(year: int) -> set[date]:
         return set()
     return set(pd.to_datetime(old["date"]).dt.date)
 
+
 def _fetch_day(d: date, method: str) -> tuple[date, dict[str, float] | None]:
     try:
         result = _read_window_for_date(d, method, _session())
@@ -243,7 +348,14 @@ def _fetch_day(d: date, method: str) -> tuple[date, dict[str, float] | None]:
         logger.error("CHIRPS %s: error inesperado: %s", d, e)
         return d, None
 
-def ingest_chirps(start: date | None = None,end: date | None = None,method: str = "auto",workers: int = 8,force: bool = False,) -> None:
+
+def ingest_chirps(
+    start: date | None = None,
+    end: date | None = None,
+    method: str = "auto",
+    workers: int = 8,
+    force: bool = False,
+) -> None:
     start, end = start or DEFAULT_START, end or DEFAULT_END
     if start > end:
         raise ValueError(f"start {start} > end {end}")
@@ -296,6 +408,9 @@ def ingest_chirps(start: date | None = None,end: date | None = None,method: str 
 
     logger.info("RESUMEN CHIRPS: %d descargados, %d faltantes, %d ya existentes", g_ok, g_missing, g_skipped)
 
+
+# ─────────────────────────── Diagnóstico ───────────────────────────
+
 def diagnose_date(d: date) -> None:
     url = _daily_url(d, gz=True)
     print(f"DIAGNÓSTICO CHIRPS {d} | URL: {url}")
@@ -330,13 +445,16 @@ def _parse_args():
     p.add_argument("--end", default=None, help=f"YYYY-MM-DD. Default: {DEFAULT_END}")
     p.add_argument("--method", default="auto", choices=["auto", "vsicurl", "download"])
     p.add_argument("--workers", type=int, default=8, help="Hilos concurrentes (I/O bound).")
+    p.add_argument("--repair", action="store_true", help="Deduplica el parquet existente y sale.")
     p.add_argument("--force", action="store_true", help="Re-descarga aunque la fecha ya exista.")
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    if args.diagnose:
+    if args.repair:
+        repair_duplicates()
+    elif args.diagnose:
         diagnose_date(date.fromisoformat(args.diagnose_date))
     else:
         ingest_chirps(

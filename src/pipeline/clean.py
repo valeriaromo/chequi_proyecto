@@ -1,18 +1,22 @@
 from __future__ import annotations
 import logging
+import re
+import shutil
 import sys
+import unicodedata
 from pathlib import Path
-import pyarrow.dataset as ds
+import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyarrow.dataset as ds
 from shapely import wkt as shapely_wkt
-from shapely.geometry.base import BaseGeometry
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from config.settings import (
     PROCESSED_DIR,
     MASTER_DIR,
     MUNICIPIOS_AGS,
+    NASA_POWER_PARAMS,
     FECHA_INICIO_MASTER,
     FECHA_FIN_MASTER,
     PARQUET_COMPRESSION,
@@ -36,334 +40,318 @@ except ImportError:
 
 MUNICIPIOS_VALIDOS = set(MUNICIPIOS_AGS.keys())
 
+# Convención para XGBoost/SHAP: toda columna `qc_*` es auditoría, NO feature (excluir en el modelo).
 RANGOS_NASA = {
-    "T2M_MAX":            (-10, 50),
-    "T2M_MIN":             (-15, 35),
-    "T2M":                 (-15, 45),
-    "RH2M":                (0, 100),
-    "WS2M":                 (0, 40),      # m/s
-    "ALLSKY_SFC_SW_DWN":    (0, 40),      # MJ/m2/día
-    "PS":                  (65, 95),      # kPa, ajustado a ~1900 msnm
-    "PRECTOTCORR":          (0, 300),     # mm/día
+    "T2M_MAX": (-10, 50),
+    "T2M_MIN": (-15, 35),
+    "T2M": (-15, 45),
+    "RH2M": (0, 100),
+    "WS2M": (0, 40),
+    "ALLSKY_SFC_SW_DWN": (0, 40),
+    "PS": (65, 95),            # kPa, ~1900 msnm
+    "PRECTOTCORR": (0, 300),   # mm/día
 }
-RANGO_CHIRPS = (0, 300)          # mm/día
-RANGO_PM25 = (0, 1200)           # µg/m3
-PM25_FLAG_SOSPECHOSO = 500       # marca, no borra
+RANGO_CHIRPS = (0, 300)        # mm/día
+RANGO_PM25 = (0, 1000)         # µg/m3 (coincide con el filtro de openaq.py)
+PM25_FLAG_SOSPECHOSO = 500     # marca, no borra
+COLS_PM25 = ("pm25_mean", "pm25_max", "pm25_q98")
+KEYWORDS_CICLON = ("cicl",)
+SENTINELA_UMBRAL = -900
 
-# Palabras a buscar en layer_name para aislar la(s) capa(s) de ciclones dentro
-# del archivo combinado que produce cenapred.py (que junta TODAS las capas
-# que matchean KEYWORDS_RIESGO en un solo parquet). Si ninguna capa descubierta
-# contiene alguna de estas palabras, clean_cenapred lo reporta como warning.
-KEYWORDS_CICLON = ["cicl"]
+
+# ---------------------------------------------------------------- utilidades
+
+def _normalizar(s: object) -> str:
+    s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"\s+", " ", s).strip()
+
+
+CATALOGO_NORM = {_normalizar(m): m for m in MUNICIPIOS_AGS}
+
+
+def _borrar(path: Path) -> None:
+    if path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
+
+
+def require_columns(df: pd.DataFrame, cols: list[str], fuente: str) -> None:
+    faltan = [c for c in cols if c not in df.columns]
+    if faltan:
+        raise ValueError(f"[{fuente}] faltan columnas {faltan}. Disponibles: {list(df.columns)}")
 
 
 def parse_dates(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
     df = df.copy()
-    before_na = df[col].isna().sum()
-    df[col] = pd.to_datetime(df[col], errors="coerce")
-    nuevos_na = df[col].isna().sum() - before_na
-    if nuevos_na > 0:
-        logger.warning(f"{nuevos_na} fechas no parseables -> NaT (se dropean)")
+    df[col] = pd.to_datetime(df[col], errors="coerce").dt.normalize()
+    n_nat = int(df[col].isna().sum())
+    if n_nat > 0:
+        logger.warning(f"{n_nat} fechas no parseables/nulas -> filas descartadas")
         df = df.dropna(subset=[col])
     return df
 
 
-def check_municipio_names(df: pd.DataFrame, col: str = "municipio", fuente: str = "") -> pd.DataFrame:
-    vistos = set(df[col].astype(str).unique())
-    desconocidos = vistos - MUNICIPIOS_VALIDOS
+def normalize_municipio(df: pd.DataFrame, col: str = "municipio", fuente: str = "") -> pd.DataFrame:
+    """Mapea nombres (sin importar acentos/mayúsculas) al catálogo; descarta lo que no matchea.
+    Siempre deja la llave de join en la columna 'municipio'."""
+    df = df.copy()
+    original = df[col].astype(str)
+    mapeado = original.map(lambda v: CATALOGO_NORM.get(_normalizar(v)))
+
+    corregidos = int((mapeado.notna() & (mapeado != original)).sum())
+    if corregidos:
+        logger.warning(f"[{fuente}] {corregidos} nombres de municipio normalizados al catálogo")
+
+    desconocidos = set(original[mapeado.isna()].unique())
     if desconocidos:
-        logger.error(f"[{fuente}] Municipios NO reconocidos (revisa acentos/espacios): {desconocidos}")
-    faltantes = MUNICIPIOS_VALIDOS - vistos
+        logger.error(
+            f"[{fuente}] Municipios NO reconocidos, {int(mapeado.isna().sum())} filas descartadas: {desconocidos}"
+        )
+
+    df = df.loc[mapeado.notna()].copy()
+    df["municipio"] = mapeado[mapeado.notna()].astype(str)
+
+    faltantes = MUNICIPIOS_VALIDOS - set(df["municipio"].unique())
     if faltantes:
-        logger.warning(f"[{fuente}] Municipios del catálogo ausentes en esta fuente: {faltantes}")
+        logger.warning(f"[{fuente}] Municipios del catálogo ausentes: {sorted(faltantes)}")
     return df
 
 
 def drop_duplicates_report(df: pd.DataFrame, subset: list[str], fuente: str = "") -> pd.DataFrame:
     n_before = len(df)
     df = df.drop_duplicates(subset=subset, keep="last")
-    n_removed = n_before - len(df)
-    if n_removed > 0:
-        logger.warning(f"[{fuente}] {n_removed} filas duplicadas en {subset} eliminadas (keep='last')")
+    if n_before - len(df) > 0:
+        logger.warning(f"[{fuente}] {n_before - len(df)} filas duplicadas en {subset} eliminadas (keep='last')")
     return df
 
 
-def replace_sentinels(df: pd.DataFrame, cols: list[str], threshold: float = -900, fuente: str = "") -> pd.DataFrame:
+def replace_sentinels(df: pd.DataFrame, cols: list[str], threshold: float = SENTINELA_UMBRAL, fuente: str = "") -> pd.DataFrame:
     df = df.copy()
     for col in cols:
         if col not in df.columns:
             continue
+        df[col] = pd.to_numeric(df[col], errors="coerce")
         mask = df[col] <= threshold
-        n = mask.sum()
-        if n > 0:
-            logger.warning(f"[{fuente}] {n} sentinelas (<= {threshold}) en '{col}' -> NaN")
+        if mask.sum() > 0:
+            logger.warning(f"[{fuente}] {int(mask.sum())} sentinelas (<= {threshold}) en '{col}' -> NaN")
             df.loc[mask, col] = np.nan
     return df
 
 
 def flag_out_of_range(df: pd.DataFrame, col: str, lo: float, hi: float, fuente: str = "") -> pd.DataFrame:
+    """Fuera de rango -> NaN (XGBoost lo maneja nativo; NO se imputa) + columna de auditoría qc_*."""
     df = df.copy()
-    if col not in df.columns:
-        return df
+    df[col] = pd.to_numeric(df[col], errors="coerce")
     mask = (df[col] < lo) | (df[col] > hi)
-    n = mask.sum()
-    flag_col = f"{col}_flag_outlier"
-    df[flag_col] = mask
-    if n > 0:
-        logger.warning(f"[{fuente}] {n} valores de '{col}' fuera de [{lo},{hi}] -> NaN + flag en {flag_col}")
+    df[f"qc_{col}_outlier"] = mask
+    if mask.sum() > 0:
+        logger.warning(f"[{fuente}] {int(mask.sum())} valores de '{col}' fuera de [{lo},{hi}] -> NaN (qc_{col}_outlier)")
         df.loc[mask, col] = np.nan
     return df
 
 
-def coverage_report(
-    df: pd.DataFrame,
-    fuente: str,
-    date_col: str = "date",
-    municipio_col: str = "municipio",
-    start=FECHA_INICIO_MASTER,
-    end=FECHA_FIN_MASTER,
-) -> None:
-    full_days = pd.date_range(start, end, freq="D")
-    expected = len(full_days) * len(MUNICIPIOS_VALIDOS)
+def warn_all_nan(df: pd.DataFrame, cols: list[str], fuente: str) -> None:
+    for c in cols:
+        if c in df.columns and df[c].isna().all():
+            logger.error(f"[{fuente}] la columna '{c}' está 100% vacía tras la limpieza")
+
+
+def coverage_report(df: pd.DataFrame, fuente: str, date_col: str = "date", municipio_col: str = "municipio",
+                    start=FECHA_INICIO_MASTER, end=FECHA_FIN_MASTER) -> None:
+    expected = len(pd.date_range(start, end, freq="D")) * len(MUNICIPIOS_VALIDOS)
     en_rango = df[(df[date_col] >= pd.Timestamp(start)) & (df[date_col] <= pd.Timestamp(end))]
-    present_en_rango = en_rango.drop_duplicates(subset=[date_col, municipio_col]).shape[0]
-
+    presentes = en_rango.drop_duplicates(subset=[date_col, municipio_col]).shape[0]
     logger.info(
-        f"[{fuente}] cobertura: {present_en_rango}/{expected} celdas "
-        f"({present_en_rango / expected * 100:.1f}%) dentro de {start}..{end} "
-        f"| filas totales en dataset: {len(df)}"
+        f"[{fuente}] cobertura: {presentes}/{expected} celdas ({presentes / expected * 100:.1f}%) "
+        f"dentro de {start}..{end} | filas totales: {len(df)}"
     )
-    if present_en_rango < expected:
-        cobertura_por_municipio = (
-            en_rango.groupby(municipio_col, observed=True)[date_col].nunique().sort_values()
-        )
-        logger.info(f"[{fuente}] municipios con menos días cubiertos: {dict(cobertura_por_municipio.head(3))}")
+    if presentes < expected:
+        por_mun = en_rango.groupby(municipio_col)[date_col].nunique().sort_values()
+        logger.info(f"[{fuente}] municipios con menos días cubiertos: {dict(por_mun.head(3))}")
 
+
+# ---------------------------------------------------------------- dinámicas
 
 def clean_nasa_power(df: pd.DataFrame) -> pd.DataFrame:
     fuente = "nasa_power"
-    df = parse_dates(df, "date")
-    df = check_municipio_names(df, fuente=fuente)
-    df = replace_sentinels(df, list(RANGOS_NASA.keys()), fuente=fuente)
+    cols = list(NASA_POWER_PARAMS)
+    require_columns(df, ["date", "municipio"] + cols, fuente)
 
-    for col, (lo, hi) in RANGOS_NASA.items():
-        df = flag_out_of_range(df, col, lo, hi, fuente=fuente)
+    sin_rango = [c for c in cols if c not in RANGOS_NASA]
+    if sin_rango:
+        logger.warning(f"[{fuente}] variables sin rango físico definido (no validadas): {sin_rango}")
+
+    df = parse_dates(df, "date")
+    df = normalize_municipio(df, fuente=fuente)
+    df = replace_sentinels(df, cols, fuente=fuente)
+    for col in cols:
+        if col in RANGOS_NASA:
+            df = flag_out_of_range(df, col, *RANGOS_NASA[col], fuente=fuente)
 
     if {"T2M_MAX", "T2M_MIN"}.issubset(df.columns):
         mask = df["T2M_MAX"] < df["T2M_MIN"]
-        n = mask.sum()
-        if n > 0:
-            logger.warning(f"[{fuente}] {n} filas con T2M_MAX < T2M_MIN -> ambas a NaN")
+        df["qc_t2m_inconsistente"] = mask
+        if mask.sum() > 0:
+            logger.warning(f"[{fuente}] {int(mask.sum())} filas con T2M_MAX < T2M_MIN -> ambas a NaN")
             df.loc[mask, ["T2M_MAX", "T2M_MIN"]] = np.nan
 
-    df = drop_duplicates_report(df, subset=["date", "municipio"], fuente=fuente)
+    df = drop_duplicates_report(df, ["date", "municipio"], fuente)
+    warn_all_nan(df, cols, fuente)
     coverage_report(df, fuente)
     return df
 
 
 def clean_chirps(df: pd.DataFrame) -> pd.DataFrame:
     fuente = "chirps"
+    require_columns(df, ["date", "municipio", "precipitation_mm"], fuente)
     df = parse_dates(df, "date")
-    df = check_municipio_names(df, fuente=fuente)
+    df = normalize_municipio(df, fuente=fuente)
+    df = replace_sentinels(df, ["precipitation_mm"], fuente=fuente)  # CHIRPS usa -9999 como nodata
     df = flag_out_of_range(df, "precipitation_mm", *RANGO_CHIRPS, fuente=fuente)
-    df = drop_duplicates_report(df, subset=["date", "municipio"], fuente=fuente)
+    df = drop_duplicates_report(df, ["date", "municipio"], fuente)
+    warn_all_nan(df, ["precipitation_mm"], fuente)
     coverage_report(df, fuente)
     return df
 
 
 def clean_openaq(df: pd.DataFrame) -> pd.DataFrame:
-    """Limpieza de calidad del aire (carpeta openaq.parquet, dato real = SINAICA)."""
     fuente = "openaq"
+    require_columns(df, ["date", "municipio", *COLS_PM25], fuente)  # q98 viene de openaq.py (antes pm25_p95)
     df = parse_dates(df, "date")
-    df = check_municipio_names(df, fuente=fuente)
+    df = normalize_municipio(df, fuente=fuente)
+    df = replace_sentinels(df, list(COLS_PM25), fuente=fuente)
 
-    for col in ("pm25_mean", "pm25_max", "pm25_p95"):
-        if col not in df.columns:
-            continue
+    for col in COLS_PM25:
         df = flag_out_of_range(df, col, *RANGO_PM25, fuente=fuente)
-        flag_col = f"{col}_flag_sospechoso"
-        df[flag_col] = df[col] > PM25_FLAG_SOSPECHOSO
-        n_sosp = df[flag_col].sum()
-        if n_sosp > 0:
-            logger.warning(
-                f"[{fuente}] {n_sosp} valores de '{col}' > {PM25_FLAG_SOSPECHOSO} µg/m3 "
-                f"marcados en {flag_col} (NO se eliminan, revisar a mano)"
-            )
+        sosp = df[col] > PM25_FLAG_SOSPECHOSO
+        df[f"qc_{col}_sospechoso"] = sosp
+        if sosp.sum() > 0:
+            logger.warning(f"[{fuente}] {int(sosp.sum())} valores de '{col}' > {PM25_FLAG_SOSPECHOSO} (marcados, no eliminados)")
 
-    df = drop_duplicates_report(df, subset=["date", "municipio"], fuente=fuente)
+    df = drop_duplicates_report(df, ["date", "municipio"], fuente)
+    warn_all_nan(df, list(COLS_PM25), fuente)
     coverage_report(df, fuente)
-
-    sin_estacion = MUNICIPIOS_VALIDOS - set(df["municipio"].astype(str).unique())
-    if sin_estacion:
-        logger.warning(f"[{fuente}] Sin estación, quedarán NaN en la tabla maestra: {sin_estacion}")
     return df
 
+
+# ---------------------------------------------------------------- estáticas
 
 def clean_static_table(df: pd.DataFrame, fuente: str) -> pd.DataFrame:
-    col_municipio = "municipio" if "municipio" in df.columns else None
-    if col_municipio is None:
-        for candidata in ("MPO_LEY", "NOM_MUN", "nom_agem"):
-            if candidata in df.columns:
-                col_municipio = candidata
-                break
+    df = df.drop(columns=["source", "year"], errors="ignore")  # evita colisiones en el merge del master
+    col = next((c for c in ("municipio", "MPO_LEY", "NOM_MUN", "nom_agem") if c in df.columns), None)
+    if col is None:
+        raise ValueError(f"[{fuente}] sin columna de municipio reconocible. Columnas: {list(df.columns)}")
 
-    if col_municipio is None:
-        logger.warning(
-            f"[{fuente}] No se encontró columna de municipio reconocible "
-            f"(columnas disponibles: {list(df.columns)}). Se omite validación de catálogo."
-        )
-        return df
+    df = normalize_municipio(df, col=col, fuente=fuente)
+    df = replace_sentinels(df, list(df.select_dtypes("number").columns), fuente=fuente)
 
-    df = check_municipio_names(df, col=col_municipio, fuente=fuente)
-    n_dup = df.duplicated(subset=[col_municipio]).sum()
+    n_dup = int(df.duplicated(subset=["municipio"]).sum())
     if n_dup > 0:
-        logger.warning(f"[{fuente}] {n_dup} municipios duplicados en '{col_municipio}' (revisar a mano)")
-    return df
+        logger.error(f"[{fuente}] {n_dup} municipios duplicados: se conserva el último. "
+                     f"Revisa la ingesta (el master exige 1 fila por municipio)")
+        df = df.drop_duplicates(subset=["municipio"], keep="last")
+    return df.reset_index(drop=True)
+
+
+def _parse_wkt(s):
+    try:
+        if pd.isna(s) or not str(s).strip():
+            return None
+        return shapely_wkt.loads(s)
+    except Exception as e:
+        logger.error(f"[municipios_geom] WKT no parseable: {e}")
+        return None
+
+
+def _cve3(x: object) -> str:
+    return str(x).strip()[-3:].lstrip("0")
 
 
 def clean_municipios_geom(df: pd.DataFrame) -> pd.DataFrame:
     fuente = "municipios_geom"
-    df = df.copy()
-    df = check_municipio_names(df, fuente=fuente)
-
+    df = clean_static_table(df, fuente)
     if "geometry_wkt" not in df.columns:
-        logger.error(f"[{fuente}] No existe columna 'geometry_wkt', no se puede validar geometría")
-        return df
+        raise ValueError(f"[{fuente}] no existe 'geometry_wkt'")
 
-    geoms: list[BaseGeometry | None] = []
-    validas = []
-    tipos_ok = []
-    centroides_en_bbox = []
+    geoms = df["geometry_wkt"].map(_parse_wkt)
+    valida = geoms.map(lambda g: g is not None and g.is_valid and not g.is_empty)
+    tipo_ok = geoms.map(lambda g: g is not None and g.geom_type in ("Polygon", "MultiPolygon"))
+    df["qc_geom_valida"] = valida.astype(bool)
+    df["qc_geom_tipo_correcto"] = tipo_ok.astype(bool)
+    if (~valida).any():
+        logger.error(f"[{fuente}] {int((~valida).sum())} geometrías inválidas o vacías")
+    if (~tipo_ok).any():
+        logger.error(f"[{fuente}] {int((~tipo_ok).sum())} geometrías que no son Polygon/MultiPolygon")
 
-    for wkt_str in df["geometry_wkt"]:
-        geom = None
-        es_valida = False
-        try:
-            if pd.isna(wkt_str) or not str(wkt_str).strip():
-                raise ValueError("WKT vacío")
-            geom = shapely_wkt.loads(wkt_str)
-            es_valida = geom.is_valid and not geom.is_empty
-        except Exception as e:
-            logger.error(f"[{fuente}] WKT no parseable: {e}")
-        geoms.append(geom)
-        validas.append(es_valida)
+    # Features numéricas útiles para XGBoost (el WKT no se puede usar como feature)
+    df["geom_area_km2"] = np.nan
+    df["geom_centroid_lat"] = np.nan
+    df["geom_centroid_lon"] = np.nan
+    try:
+        gs = gpd.GeoSeries(list(geoms.where(valida)), index=df.index, crs="EPSG:4326")
+        proj = gs.to_crs("EPSG:6372")  # LCC México (INEGI), área correcta
+        df["geom_area_km2"] = proj.area / 1e6
+        cen = proj.centroid.to_crs("EPSG:4326")
+        df["geom_centroid_lat"] = cen.y
+        df["geom_centroid_lon"] = cen.x
+    except Exception as e:
+        logger.error(f"[{fuente}] no se pudieron calcular área/centroide: {e}")
 
-        tipo_ok = geom is not None and geom.geom_type in ("Polygon", "MultiPolygon")
-        tipos_ok.append(tipo_ok)
-
-        if geom is not None and es_valida and BBOX_AGS is not None:
-            c = geom.centroid
-            dentro = (
-                BBOX_AGS["lon_min"] <= c.x <= BBOX_AGS["lon_max"]
-                and BBOX_AGS["lat_min"] <= c.y <= BBOX_AGS["lat_max"]
-            )
-            centroides_en_bbox.append(dentro)
-        else:
-            centroides_en_bbox.append(None)
-
-    df["geom_flag_valida"] = validas
-    df["geom_flag_tipo_correcto"] = tipos_ok
     if BBOX_AGS is not None:
-        df["geom_flag_centroide_en_bbox"] = centroides_en_bbox
-
-    n_invalidas = (~pd.Series(validas)).sum()
-    n_tipo_malo = (~pd.Series(tipos_ok)).sum()
-    if n_invalidas > 0:
-        logger.error(f"[{fuente}] {n_invalidas} geometrías inválidas o vacías (ver geom_flag_valida)")
-    if n_tipo_malo > 0:
-        logger.error(f"[{fuente}] {n_tipo_malo} geometrías que no son Polygon/MultiPolygon (ver geom_flag_tipo_correcto)")
-    if BBOX_AGS is not None:
-        n_fuera_bbox = sum(v is False for v in centroides_en_bbox)
-        if n_fuera_bbox > 0:
-            logger.error(
-                f"[{fuente}] {n_fuera_bbox} centroides FUERA del bounding box de Aguascalientes "
-                f"-> revisar CRS/coordenadas (ver geom_flag_centroide_en_bbox)"
-            )
-
-    if INEGI_MUNICIPIOS_AGS is not None and "cve_agem" in df.columns and "municipio" in df.columns:
-        esperado = df["municipio"].map(INEGI_MUNICIPIOS_AGS)
-        mismatch = esperado.notna() & (esperado != df["cve_agem"].astype(str))
-        n_mismatch = mismatch.sum()
-        if n_mismatch > 0:
-            logger.error(
-                f"[{fuente}] {n_mismatch} filas con cve_agem que NO coincide con el catálogo "
-                f"INEGI_MUNICIPIOS_AGS (revisar: {df.loc[mismatch, ['municipio', 'cve_agem']].to_dict('records')})"
-            )
-        df["geom_flag_cve_agem_ok"] = ~mismatch
-
-    df = drop_duplicates_report(df, subset=["municipio"], fuente=fuente)
-    return df
-
-
-def clean_cenapred(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    cenapred.py descubre TODAS las capas cuyo nombre matchea KEYWORDS_RIESGO y las
-    concatena en un solo parquet (con 'layer_id'/'layer_name' distinguiendo cada una).
-    Esta limpieza está calibrada para una capa específica de "ciclones históricos"
-    (columnas MPO_LEY/AREA/Ciclones_f/Ciclones_l) -- así que primero aislamos esa(s)
-    capa(s) por nombre antes de aplicar esa lógica. Si ninguna capa descubierta por
-    cenapred.py contiene 'cicl' en el nombre, probablemente KEYWORDS_RIESGO en
-    cenapred.py no está encontrando la capa correcta y hay que ajustarlo ahí.
-    """
-    fuente = "cenapred_ciclones"
-    df = df.copy()
-
-    if "layer_name" in df.columns:
-        capas_presentes = sorted(df["layer_name"].astype(str).unique().tolist())
-        logger.info(f"[{fuente}] capas presentes en cenapred.parquet: {capas_presentes}")
-
-        mask_ciclon = df["layer_name"].astype(str).str.contains(
-            "|".join(KEYWORDS_CICLON), case=False, na=False
+        dentro = (
+            df["geom_centroid_lon"].between(BBOX_AGS["lon_min"], BBOX_AGS["lon_max"])
+            & df["geom_centroid_lat"].between(BBOX_AGS["lat_min"], BBOX_AGS["lat_max"])
         )
-        if mask_ciclon.any():
-            df = df[mask_ciclon].copy()
-            logger.info(f"[{fuente}] filtrado a {len(df)} filas de capa(s) de ciclones")
-        else:
-            logger.warning(
-                f"[{fuente}] ninguna capa descubierta por cenapred.py contiene "
-                f"{KEYWORDS_CICLON} en el nombre (capas disponibles arriba). "
-                f"Los campos MPO_LEY/AREA/Ciclones_f probablemente NO existan en "
-                f"este dataset -> revisa KEYWORDS_RIESGO en cenapred.py."
-            )
+        df["qc_geom_centroide_en_bbox"] = dentro
+        if (~dentro).any():
+            logger.error(f"[{fuente}] {int((~dentro).sum())} centroides fuera del bbox -> revisar CRS")
 
-    if "EDO_LEY" in df.columns:
-        n_antes = len(df)
-        df = df[df["EDO_LEY"].astype(str) == "Aguascalientes"].copy()
-        n_fuera = n_antes - len(df)
-        if n_fuera > 0:
-            logger.warning(f"[{fuente}] {n_fuera} filas de otros estados eliminadas (EDO_LEY != Aguascalientes)")
-
-    if "MPO_LEY" in df.columns:
-        df = check_municipio_names(df, col="MPO_LEY", fuente=fuente)
-
-    if "AREA" in df.columns:
-        mask_area_mala = df["AREA"] <= 0
-        n_area_mala = mask_area_mala.sum()
-        df["cenapred_flag_area_invalida"] = mask_area_mala
-        if n_area_mala > 0:
-            logger.error(f"[{fuente}] {n_area_mala} filas con AREA <= 0 (dato corrupto, ver cenapred_flag_area_invalida)")
-
-    if "Ciclones_f" in df.columns:
-        valores_validos = {0, 1}
-        vals = pd.to_numeric(df["Ciclones_f"], errors="coerce")
-        mask_invalida = ~vals.isin(valores_validos)
-        n_invalida = mask_invalida.sum()
-        if n_invalida > 0:
-            logger.warning(
-                f"[{fuente}] {n_invalida} valores de 'Ciclones_f' fuera de {{0,1}} -> "
-                f"se dejan en NaN en vez de asumir 0 (ver cenapred_flag_ciclones_valor_raro)"
-            )
-        df["cenapred_flag_ciclones_valor_raro"] = mask_invalida
-        vals[mask_invalida] = np.nan
-        df["Ciclones_f"] = vals
-
-    subset_dedupe = [c for c in ("FID",) if c in df.columns] or [
-        c for c in ("MPO_LEY", "layer_name") if c in df.columns
-    ]
-    if subset_dedupe:
-        df = drop_duplicates_report(df, subset=subset_dedupe, fuente=fuente)
-
+    if INEGI_MUNICIPIOS_AGS is not None and "cve_agem" in df.columns:
+        esperado = df["municipio"].map(INEGI_MUNICIPIOS_AGS)
+        mismatch = esperado.notna() & (esperado.map(_cve3) != df["cve_agem"].map(_cve3))
+        df["qc_geom_cve_agem_ok"] = ~mismatch
+        if mismatch.any():
+            logger.error(f"[{fuente}] cve_agem no coincide con el catálogo: "
+                         f"{df.loc[mismatch, ['municipio', 'cve_agem']].to_dict('records')}")
     return df
+
+
+def clean_ciclones(df: pd.DataFrame) -> pd.DataFrame:
+    """cenapred.py entrega 1 fila por municipio con columnas l<id>_<slug>_n (conteo) y *_max.
+    Aquí se conservan solo las columnas de capas de ciclones."""
+    fuente = "cenapred_ciclones"
+    df = df.drop(columns=["source", "year"], errors="ignore")
+    df = normalize_municipio(df, fuente=fuente)
+
+    cols_ciclon = [c for c in df.columns if re.match(r"^l\d+_", c) and any(k in c for k in KEYWORDS_CICLON)]
+    if not cols_ciclon:
+        raise ValueError(f"[{fuente}] ninguna columna de capa de ciclones. Columnas: {list(df.columns)}")
+    otras = [c for c in df.columns if re.match(r"^l\d+_", c) and c not in cols_ciclon]
+    if otras:
+        logger.info(f"[{fuente}] columnas de otras capas descartadas del master de ciclones: {otras}")
+
+    out = df[["municipio"] + cols_ciclon].copy()
+
+    for c in [c for c in cols_ciclon if pd.api.types.is_datetime64_any_dtype(out[c])]:
+        logger.warning(f"[{fuente}] columna datetime '{c}' descartada (XGBoost no la acepta y filtra información futura)")
+        out = out.drop(columns=c)
+
+    for c in [c for c in out.columns if c.endswith("_n")]:
+        out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0)
+        if (out[c] < 0).any():
+            logger.error(f"[{fuente}] '{c}' con conteos negativos -> NaN")
+            out.loc[out[c] < 0, c] = np.nan
+        out[c] = out[c].astype("float32")
+
+    n_dup = int(out.duplicated("municipio").sum())
+    if n_dup:
+        logger.error(f"[{fuente}] {n_dup} municipios duplicados, se conserva el último")
+        out = out.drop_duplicates("municipio", keep="last")
+    return out.reset_index(drop=True)
+
+
+# ---------------------------------------------------------------- orquestación
 
 FUENTES_DINAMICAS = {
     "nasa_power": (clean_nasa_power, "nasa_power"),
@@ -371,104 +359,91 @@ FUENTES_DINAMICAS = {
     "openaq": (clean_openaq, "openaq"),
 }
 
-FUENTES_ESTATICAS = [
-    "poblacion",
-    "elevacion",
-    "rios",
-    "geometria_municipios",
-    "ciclones",
-]
+FUENTES_ESTATICAS = ["poblacion", "elevacion", "rios", "geometria_municipios", "ciclones"]
 
 LIMPIADORES_ESTATICOS_ESPECIALES = {
     "geometria_municipios": clean_municipios_geom,
-    "ciclones": clean_cenapred,
+    "ciclones": clean_ciclones,
 }
 
-# FIX: estas rutas antes apuntaban a "inegi.parquet/<nombre>.parquet" y
-# "cenapred.parquet/ciclones.parquet", que NUNCA existen -- inegi.py guarda cada
-# tabla como su propio directorio particionado top-level (inegi_<nombre>.parquet),
-# y cenapred.py guarda un único cenapred.parquet con todas las capas juntas.
-MAPEO_RUTAS = {
-    "poblacion": PROCESSED_DIR / "inegi_poblacion.parquet",
-    "elevacion": PROCESSED_DIR / "inegi_elevacion.parquet",
-    "rios": PROCESSED_DIR / "inegi_rios.parquet",
-    "geometria_municipios": PROCESSED_DIR / "inegi_geometria_municipios.parquet",
-    "ciclones": PROCESSED_DIR / "cenapred.parquet",
-    "cenapred_ciclones": PROCESSED_DIR / "cenapred.parquet",
+# Candidatos en orden de prioridad (verifica con `dir data\processed` cuál es el real).
+# geo_utils.py lee la geometría de inegi.parquet/geometria_municipios.parquet.
+MAPEO_RUTAS: dict[str, list[Path]] = {
+    "poblacion": [PROCESSED_DIR / "inegi_poblacion.parquet", PROCESSED_DIR / "inegi.parquet" / "poblacion.parquet"],
+    "elevacion": [PROCESSED_DIR / "inegi_elevacion.parquet", PROCESSED_DIR / "inegi.parquet" / "elevacion.parquet"],
+    "rios": [PROCESSED_DIR / "inegi_rios.parquet", PROCESSED_DIR / "inegi.parquet" / "rios.parquet"],
+    "geometria_municipios": [
+        PROCESSED_DIR / "inegi.parquet" / "geometria_municipios.parquet",
+        PROCESSED_DIR / "inegi_geometria_municipios.parquet",
+    ],
+    "ciclones": [PROCESSED_DIR / "cenapred.parquet"],
 }
 
 
-def _read_processed(nombre: str) -> pd.DataFrame | None:
-    if nombre in MAPEO_RUTAS:
-        path = MAPEO_RUTAS[nombre]
-    else:
-        path = PROCESSED_DIR / f"{nombre}.parquet"
-    if not path.exists():
-        logger.warning(f"No existe {path}, se omite")
-        return None
-    try:
-        if path.is_dir():
-            dataset = ds.dataset(path, format="parquet")
-            return dataset.to_table().to_pandas()
-        else:
-            return pd.read_parquet(path, engine="pyarrow")
-    except Exception as e:
-        logger.error(f"Error al leer {path}: {e}")
-        return None
+def _read_processed(nombre: str) -> pd.DataFrame:
+    candidatos = MAPEO_RUTAS.get(nombre, [PROCESSED_DIR / f"{nombre}.parquet"])
+    path = next((p for p in candidatos if p.exists()), None)
+    if path is None:
+        raise FileNotFoundError(f"{nombre}: no existe ninguna de {[str(p) for p in candidatos]}")
+    logger.info(f"{nombre}: leyendo {path}")
+    df = ds.dataset(path, format="parquet").to_table().to_pandas() if path.is_dir() else pd.read_parquet(path)
+    if "municipio" in df.columns:
+        df["municipio"] = df["municipio"].astype(str)  # category -> str para joins consistentes
+    return df
 
 
-def clean_dynamic_source(nombre: str, cleaner_fn, source_tag: str) -> pd.DataFrame | None:
+def _guardar_master(df: pd.DataFrame, nombre: str, partition_cols: list[str] | None) -> Path:
+    """save_parquet particionado no borra archivos previos: escribir a tmp y reemplazar."""
+    out = MASTER_DIR / f"{nombre}.parquet"
+    tmp = out.with_name(f"{nombre}.tmp.parquet")
+    _borrar(tmp)
+    save_parquet(df, tmp, partition_cols=partition_cols, compression=PARQUET_COMPRESSION)
+    _borrar(out)
+    tmp.rename(out)
+    return out
+
+
+def clean_dynamic_source(nombre: str, cleaner_fn, source_tag: str) -> pd.DataFrame:
     df = _read_processed(nombre)
-    if df is None:
-        return None
-
-    logger.info(f"--- Limpiando {nombre} ({len(df)} filas antes, leído de data/processed/) ---")
-    df_limpio = cleaner_fn(df)
-    df_limpio = df_limpio.copy()
-    df_limpio["year"] = df_limpio["date"].dt.year
-    df_limpio["source"] = source_tag
-
-    out_path = MASTER_DIR / f"{nombre}.parquet"
-    save_parquet(
-        df_limpio,
-        out_path,
-        partition_cols=["source", "year"],
-        compression=PARQUET_COMPRESSION,
-    )
-    logger.info(f"--- {nombre}: {len(df_limpio)} filas después -> {out_path} (particionado) ---")
-    return df_limpio
+    logger.info(f"--- Limpiando {nombre} ({len(df)} filas antes) ---")
+    df = cleaner_fn(df).copy()
+    df["year"] = df["date"].dt.year
+    df["source"] = source_tag
+    out = _guardar_master(df, nombre, ["source", "year"])
+    logger.info(f"--- {nombre}: {len(df)} filas después -> {out} ---")
+    return df
 
 
-def clean_static_source(nombre: str) -> pd.DataFrame | None:
+def clean_static_source(nombre: str) -> pd.DataFrame:
     df = _read_processed(nombre)
-    if df is None:
-        return None
-
-    logger.info(f"--- Limpiando {nombre} ({len(df)} filas, tabla estática) ---")
-
-    cleaner_especial = LIMPIADORES_ESTATICOS_ESPECIALES.get(nombre)
-    if cleaner_especial is not None:
-        df_limpio = cleaner_especial(df)
-    else:
-        df_limpio = clean_static_table(df, nombre)
-
-    out_path = MASTER_DIR / f"{nombre}.parquet"
-    save_parquet(df_limpio, out_path, partition_cols=None, compression=PARQUET_COMPRESSION)
-    logger.info(f"--- {nombre}: guardado sin particionar -> {out_path} ---")
-    return df_limpio
+    logger.info(f"--- Limpiando {nombre} ({len(df)} filas, estática) ---")
+    cleaner = LIMPIADORES_ESTATICOS_ESPECIALES.get(nombre)
+    df = cleaner(df) if cleaner else clean_static_table(df, nombre)
+    out = _guardar_master(df, nombre, None)
+    logger.info(f"--- {nombre}: {len(df)} filas -> {out} ---")
+    return df
 
 
 def run_cleaning_pipeline() -> None:
+    fallos: dict[str, str] = {}
+
     for nombre, (fn, tag) in FUENTES_DINAMICAS.items():
-        clean_dynamic_source(nombre, fn, tag)
+        try:
+            clean_dynamic_source(nombre, fn, tag)
+        except Exception as e:
+            fallos[nombre] = f"{type(e).__name__}: {e}"
+            logger.error(f"{nombre} falló: {fallos[nombre]}")
 
     for nombre in FUENTES_ESTATICAS:
-        clean_static_source(nombre)
+        try:
+            clean_static_source(nombre)
+        except Exception as e:
+            fallos[nombre] = f"{type(e).__name__}: {e}"
+            logger.error(f"{nombre} falló: {fallos[nombre]}")
 
-    logger.info(
-        "Limpieza completa. data/processed/ no fue modificado. "
-        "Revisa los WARNING/ERROR arriba, luego apunta build_master_table.py a data/master/."
-    )
+    if fallos:
+        raise RuntimeError(f"Limpieza incompleta, no corras build_master_table.py. Fallos: {fallos}")
+    logger.info("Limpieza completa. data/processed/ no fue modificado; revisa WARNING/ERROR y apunta el master a data/master/.")
 
 
 if __name__ == "__main__":
