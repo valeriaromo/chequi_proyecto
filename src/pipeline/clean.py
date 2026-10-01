@@ -50,6 +50,12 @@ RANGO_CHIRPS = (0, 300)          # mm/día
 RANGO_PM25 = (0, 1200)           # µg/m3
 PM25_FLAG_SOSPECHOSO = 500       # marca, no borra
 
+# Palabras a buscar en layer_name para aislar la(s) capa(s) de ciclones dentro
+# del archivo combinado que produce cenapred.py (que junta TODAS las capas
+# que matchean KEYWORDS_RIESGO en un solo parquet). Si ninguna capa descubierta
+# contiene alguna de estas palabras, clean_cenapred lo reporta como warning.
+KEYWORDS_CICLON = ["cicl"]
+
 
 def parse_dates(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
     df = df.copy()
@@ -290,8 +296,35 @@ def clean_municipios_geom(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def clean_cenapred(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    cenapred.py descubre TODAS las capas cuyo nombre matchea KEYWORDS_RIESGO y las
+    concatena en un solo parquet (con 'layer_id'/'layer_name' distinguiendo cada una).
+    Esta limpieza está calibrada para una capa específica de "ciclones históricos"
+    (columnas MPO_LEY/AREA/Ciclones_f/Ciclones_l) -- así que primero aislamos esa(s)
+    capa(s) por nombre antes de aplicar esa lógica. Si ninguna capa descubierta por
+    cenapred.py contiene 'cicl' en el nombre, probablemente KEYWORDS_RIESGO en
+    cenapred.py no está encontrando la capa correcta y hay que ajustarlo ahí.
+    """
     fuente = "cenapred_ciclones"
     df = df.copy()
+
+    if "layer_name" in df.columns:
+        capas_presentes = sorted(df["layer_name"].astype(str).unique().tolist())
+        logger.info(f"[{fuente}] capas presentes en cenapred.parquet: {capas_presentes}")
+
+        mask_ciclon = df["layer_name"].astype(str).str.contains(
+            "|".join(KEYWORDS_CICLON), case=False, na=False
+        )
+        if mask_ciclon.any():
+            df = df[mask_ciclon].copy()
+            logger.info(f"[{fuente}] filtrado a {len(df)} filas de capa(s) de ciclones")
+        else:
+            logger.warning(
+                f"[{fuente}] ninguna capa descubierta por cenapred.py contiene "
+                f"{KEYWORDS_CICLON} en el nombre (capas disponibles arriba). "
+                f"Los campos MPO_LEY/AREA/Ciclones_f probablemente NO existan en "
+                f"este dataset -> revisa KEYWORDS_RIESGO en cenapred.py."
+            )
 
     if "EDO_LEY" in df.columns:
         n_antes = len(df)
@@ -342,20 +375,30 @@ FUENTES_ESTATICAS = [
     "poblacion",
     "elevacion",
     "rios",
-    "geometria_municipios",    
-    "ciclones",     
+    "geometria_municipios",
+    "ciclones",
 ]
 
+LIMPIADORES_ESTATICOS_ESPECIALES = {
+    "geometria_municipios": clean_municipios_geom,
+    "ciclones": clean_cenapred,
+}
+
+# FIX: estas rutas antes apuntaban a "inegi.parquet/<nombre>.parquet" y
+# "cenapred.parquet/ciclones.parquet", que NUNCA existen -- inegi.py guarda cada
+# tabla como su propio directorio particionado top-level (inegi_<nombre>.parquet),
+# y cenapred.py guarda un único cenapred.parquet con todas las capas juntas.
+MAPEO_RUTAS = {
+    "poblacion": PROCESSED_DIR / "inegi_poblacion.parquet",
+    "elevacion": PROCESSED_DIR / "inegi_elevacion.parquet",
+    "rios": PROCESSED_DIR / "inegi_rios.parquet",
+    "geometria_municipios": PROCESSED_DIR / "inegi_geometria_municipios.parquet",
+    "ciclones": PROCESSED_DIR / "cenapred.parquet",
+    "cenapred_ciclones": PROCESSED_DIR / "cenapred.parquet",
+}
+
+
 def _read_processed(nombre: str) -> pd.DataFrame | None:
-    MAPEO_RUTAS = {
-        "elevacion": PROCESSED_DIR / "inegi.parquet" / "elevacion.parquet",
-        "poblacion": PROCESSED_DIR / "inegi.parquet" / "poblacion.parquet",
-        "rios": PROCESSED_DIR / "inegi.parquet" / "rios.parquet",
-        "geometria_municipios": PROCESSED_DIR / "inegi.parquet" / "geometria_municipios.parquet",
-        "ciclones": PROCESSED_DIR / "cenapred.parquet" / "ciclones.parquet",
-        "cenapred_ciclones": PROCESSED_DIR / "cenapred.parquet" / "ciclones.parquet",
-    }
-    
     if nombre in MAPEO_RUTAS:
         path = MAPEO_RUTAS[nombre]
     else:
@@ -402,7 +445,12 @@ def clean_static_source(nombre: str) -> pd.DataFrame | None:
         return None
 
     logger.info(f"--- Limpiando {nombre} ({len(df)} filas, tabla estática) ---")
-    df_limpio = clean_static_table(df, nombre)
+
+    cleaner_especial = LIMPIADORES_ESTATICOS_ESPECIALES.get(nombre)
+    if cleaner_especial is not None:
+        df_limpio = cleaner_especial(df)
+    else:
+        df_limpio = clean_static_table(df, nombre)
 
     out_path = MASTER_DIR / f"{nombre}.parquet"
     save_parquet(df_limpio, out_path, partition_cols=None, compression=PARQUET_COMPRESSION)

@@ -1,12 +1,3 @@
-"""
-Utilidades de entrada/salida.
-
-La idea central de este módulo: cada vez que se guarda un DataFrame,
-se reduce su tamaño en memoria/disco ANTES de escribirlo (downcasting
-de tipos + compresión zstd + particionado). Esto es lo que evita que
-el proyecto termine con una "db pesada".
-"""
-
 from __future__ import annotations
 
 import logging
@@ -19,15 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def downcast_dtypes(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Reduce el tamaño en memoria de un DataFrame:
-    - float64 -> float32
-    - int64   -> int32/int16 según el rango
-    - columnas de baja cardinalidad (ej. municipio) -> category
 
-    Esto solo puede reducir 40-60% el tamaño sin perder precisión relevante
-    para variables climáticas (no necesitamos float64 para temperatura).
-    """
     before_mb = df.memory_usage(deep=True).sum() / 1e6
 
     for col in df.select_dtypes(include=["float64"]).columns:
@@ -53,11 +36,6 @@ def save_parquet(
     partition_cols: list[str] | None = None,
     compression: str = "zstd",
 ) -> None:
-    """
-    Guarda un DataFrame en Parquet comprimido, con downcasting previo.
-    Si se pasan partition_cols, se particiona (ej. por año) para que
-    lecturas futuras no tengan que cargar el histórico completo.
-    """
     df = downcast_dtypes(df.copy())
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -82,10 +60,6 @@ def save_parquet(
 
 
 def append_parquet(df: pd.DataFrame, path: Path, compression: str = "zstd") -> None:
-    """
-    Agrega filas nuevas a un parquet existente sin reescribir todo el histórico.
-    Útil para actualizaciones incrementales (ej. correr la ingesta cada día).
-    """
     df = downcast_dtypes(df.copy())
     if path.exists():
         existing = pd.read_parquet(path)
@@ -111,11 +85,6 @@ def _dir_or_file_size_mb(path: Path) -> float:
 
 
 def cleanup_raw(path: Path) -> None:
-    """
-    Borra archivos crudos temporales (ej. rasters descargados) una vez que
-    ya se extrajo y guardó el resultado agregado. Esto es lo que evita
-    acumular TB de rasters que solo se usan una vez.
-    """
     if path.exists():
         path.unlink()
         logger.info(f"Crudo eliminado: {path}")

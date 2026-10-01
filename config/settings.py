@@ -33,7 +33,7 @@ MUNICIPIOS_AGS = {
     "San Francisco de los Romo": {"lat": 22.0833, "lon": -102.2667},
 }
 
-FECHA_INICIO = date(1981, 1, 1)
+FECHA_INICIO = date(2020, 1, 1)
 FECHA_FIN = date.today()
 
 NASA_POWER_BASE_URL = "https://power.larc.nasa.gov/api/temporal/daily/point"
