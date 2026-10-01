@@ -13,3 +13,4 @@ statsmodels>=0.14
 plotly>=5.20
 folium>=0.16
 inegipy>=2.0.0
+pip install earthengine-api

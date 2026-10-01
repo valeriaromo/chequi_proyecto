@@ -60,8 +60,7 @@ OPENAQ_PARAMETRO_PRINCIPAL = "pm25"
 
 
 import os
-INEGI_TOKEN = os.environ.get("INEGI_TOKEN")  # opcional, solo si usas Indicadores
-
+INEGI_TOKEN = os.environ.get("INEGI_TOKEN")  # opcional para descargar datos de INEGI vía API sino se usan archivos locales.
 INEGI_ENTIDAD_AGS = "01"  # clave AGEE de Aguascalientes
 
 INEGI_MUNICIPIOS_AGS = {
@@ -85,6 +84,8 @@ CENAPRED_ARCGIS_MAPSERVER = (
     "https://sigagis.conagua.gob.mx/ArcGIS/rest/services/Caracterizaci%C3%B3n/MapServer"
 )
 CENAPRED_ESTADO_FILTRO = "Aguascalientes"
+
+GEE_PROJECT = "chequiproyecto"
 
 from datetime import date, timedelta
 FECHA_FIN_MASTER = date(2026, 7, 31) 

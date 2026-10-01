@@ -10,18 +10,9 @@ import numpy as np
 import pandas as pd
 import pyarrow.dataset as ds
 from shapely import wkt as shapely_wkt
-
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from config.settings import (
-    PROCESSED_DIR,
-    MASTER_DIR,
-    MUNICIPIOS_AGS,
-    NASA_POWER_PARAMS,
-    FECHA_INICIO_MASTER,
-    FECHA_FIN_MASTER,
-    PARQUET_COMPRESSION,
-)
-from src.utils.io_utils import save_parquet
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config.settings import (FECHA_FIN_MASTER,FECHA_INICIO_MASTER,MASTER_DIR,MUNICIPIOS_AGS,NASA_POWER_PARAMS,PARQUET_COMPRESSION,PROCESSED_DIR,)
+from src.utils.io_utils import save_parquet  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
@@ -40,7 +31,7 @@ except ImportError:
 
 MUNICIPIOS_VALIDOS = set(MUNICIPIOS_AGS.keys())
 
-# Convención para XGBoost/SHAP: toda columna `qc_*` es auditoría, NO feature (excluir en el modelo).
+# para la implementación de XGBoost, se requiere que el master tenga una fila por municipio
 RANGOS_NASA = {
     "T2M_MAX": (-10, 50),
     "T2M_MIN": (-15, 35),
@@ -55,19 +46,18 @@ RANGO_CHIRPS = (0, 300)        # mm/día
 RANGO_PM25 = (0, 1000)         # µg/m3 (coincide con el filtro de openaq.py)
 PM25_FLAG_SOSPECHOSO = 500     # marca, no borra
 COLS_PM25 = ("pm25_mean", "pm25_max", "pm25_q98")
+RANGO_AOD = (0, 5)             # AOD 550 nm (mismo tope que maiac.py)
+RANGO_PCT = (0, 100)
+AOD_MIN_PIXELES = 10           # menos píxeles válidos se flaggea
+COLS_AOD = ("aod_055_mean", "aod_055_count", "aod_qa_best_pct")
 KEYWORDS_CICLON = ("cicl",)
 SENTINELA_UMBRAL = -900
 
 
-# ---------------------------------------------------------------- utilidades
-
 def _normalizar(s: object) -> str:
     s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
     return re.sub(r"\s+", " ", s).strip()
-
-
 CATALOGO_NORM = {_normalizar(m): m for m in MUNICIPIOS_AGS}
-
 
 def _borrar(path: Path) -> None:
     if path.is_dir():
@@ -75,12 +65,10 @@ def _borrar(path: Path) -> None:
     elif path.exists():
         path.unlink()
 
-
 def require_columns(df: pd.DataFrame, cols: list[str], fuente: str) -> None:
     faltan = [c for c in cols if c not in df.columns]
     if faltan:
         raise ValueError(f"[{fuente}] faltan columnas {faltan}. Disponibles: {list(df.columns)}")
-
 
 def parse_dates(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
     df = df.copy()
@@ -91,18 +79,13 @@ def parse_dates(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
         df = df.dropna(subset=[col])
     return df
 
-
 def normalize_municipio(df: pd.DataFrame, col: str = "municipio", fuente: str = "") -> pd.DataFrame:
-    """Mapea nombres (sin importar acentos/mayúsculas) al catálogo; descarta lo que no matchea.
-    Siempre deja la llave de join en la columna 'municipio'."""
     df = df.copy()
     original = df[col].astype(str)
     mapeado = original.map(lambda v: CATALOGO_NORM.get(_normalizar(v)))
-
     corregidos = int((mapeado.notna() & (mapeado != original)).sum())
     if corregidos:
         logger.warning(f"[{fuente}] {corregidos} nombres de municipio normalizados al catálogo")
-
     desconocidos = set(original[mapeado.isna()].unique())
     if desconocidos:
         logger.error(
@@ -111,12 +94,10 @@ def normalize_municipio(df: pd.DataFrame, col: str = "municipio", fuente: str = 
 
     df = df.loc[mapeado.notna()].copy()
     df["municipio"] = mapeado[mapeado.notna()].astype(str)
-
     faltantes = MUNICIPIOS_VALIDOS - set(df["municipio"].unique())
     if faltantes:
         logger.warning(f"[{fuente}] Municipios del catálogo ausentes: {sorted(faltantes)}")
     return df
-
 
 def drop_duplicates_report(df: pd.DataFrame, subset: list[str], fuente: str = "") -> pd.DataFrame:
     n_before = len(df)
@@ -124,7 +105,6 @@ def drop_duplicates_report(df: pd.DataFrame, subset: list[str], fuente: str = ""
     if n_before - len(df) > 0:
         logger.warning(f"[{fuente}] {n_before - len(df)} filas duplicadas en {subset} eliminadas (keep='last')")
     return df
-
 
 def replace_sentinels(df: pd.DataFrame, cols: list[str], threshold: float = SENTINELA_UMBRAL, fuente: str = "") -> pd.DataFrame:
     df = df.copy()
@@ -138,10 +118,8 @@ def replace_sentinels(df: pd.DataFrame, cols: list[str], threshold: float = SENT
             df.loc[mask, col] = np.nan
     return df
 
-
 def flag_out_of_range(df: pd.DataFrame, col: str, lo: float, hi: float, fuente: str = "") -> pd.DataFrame:
-    """Fuera de rango -> NaN (XGBoost lo maneja nativo; NO se imputa) + columna de auditoría qc_*."""
-    df = df.copy()
+    df = df.copy() # el Nan ayuda al XGBoost a no aprender de valores fuera de rango
     df[col] = pd.to_numeric(df[col], errors="coerce")
     mask = (df[col] < lo) | (df[col] > hi)
     df[f"qc_{col}_outlier"] = mask
@@ -150,12 +128,10 @@ def flag_out_of_range(df: pd.DataFrame, col: str, lo: float, hi: float, fuente: 
         df.loc[mask, col] = np.nan
     return df
 
-
 def warn_all_nan(df: pd.DataFrame, cols: list[str], fuente: str) -> None:
     for c in cols:
         if c in df.columns and df[c].isna().all():
             logger.error(f"[{fuente}] la columna '{c}' está 100% vacía tras la limpieza")
-
 
 def coverage_report(df: pd.DataFrame, fuente: str, date_col: str = "date", municipio_col: str = "municipio",
                     start=FECHA_INICIO_MASTER, end=FECHA_FIN_MASTER) -> None:
@@ -170,8 +146,6 @@ def coverage_report(df: pd.DataFrame, fuente: str, date_col: str = "date", munic
         por_mun = en_rango.groupby(municipio_col)[date_col].nunique().sort_values()
         logger.info(f"[{fuente}] municipios con menos días cubiertos: {dict(por_mun.head(3))}")
 
-
-# ---------------------------------------------------------------- dinámicas
 
 def clean_nasa_power(df: pd.DataFrame) -> pd.DataFrame:
     fuente = "nasa_power"
@@ -234,8 +208,49 @@ def clean_openaq(df: pd.DataFrame) -> pd.DataFrame:
     coverage_report(df, fuente)
     return df
 
+def clean_maiac_aod(df: pd.DataFrame) -> pd.DataFrame:
+    fuente = "maiac_aod"
+    require_columns(df, ["date", "municipio", *COLS_AOD], fuente)
+    df = parse_dates(df, "date")
+    df = normalize_municipio(df, fuente=fuente)
+    df = replace_sentinels(df, list(COLS_AOD), fuente=fuente)
+    neg = df["aod_055_count"] < 0
+    if neg.any():
+        logger.error(f"[{fuente}] {int(neg.sum())} conteos negativos en 'aod_055_count' -> NaN")
+        df.loc[neg, "aod_055_count"] = np.nan
+    sin_pixeles = df["aod_055_count"] == 0
+    con_valor = df["aod_055_mean"].notna() | df["aod_qa_best_pct"].notna()
+    incoherentes = sin_pixeles & con_valor
+    if incoherentes.any():
+        logger.error(f"[{fuente}] {int(incoherentes.sum())} filas con count=0 pero con AOD/best_pct -> NaN")
+        df.loc[incoherentes, ["aod_055_mean", "aod_qa_best_pct"]] = np.nan
 
-# ---------------------------------------------------------------- estáticas
+    df = flag_out_of_range(df, "aod_055_mean", *RANGO_AOD, fuente=fuente)
+    df = flag_out_of_range(df, "aod_qa_best_pct", *RANGO_PCT, fuente=fuente)
+
+    pocos = (df["aod_055_count"] > 0) & (df["aod_055_count"] < AOD_MIN_PIXELES)
+    df["qc_aod_pocos_pixeles"] = pocos
+    if pocos.any():
+        logger.warning(f"[{fuente}] {int(pocos.sum())} celdas con < {AOD_MIN_PIXELES} píxeles válidos (marcadas, no eliminadas)")
+    if "qc_aod_imputed" not in df.columns:
+        df["qc_aod_imputed"] = False
+    if "aod_imputed_method" not in df.columns:
+        df["aod_imputed_method"] = "none"
+    df["qc_aod_imputed"] = df["qc_aod_imputed"].fillna(False).astype(bool)
+    df["aod_imputed_method"] = df["aod_imputed_method"].fillna("none").astype(str)
+    inconsistente = df["qc_aod_imputed"] != (df["aod_imputed_method"] != "none")
+    if inconsistente.any():
+        logger.error(f"[{fuente}] {int(inconsistente.sum())} filas con qc_aod_imputed inconsistente con aod_imputed_method")
+
+    df = drop_duplicates_report(df, ["date", "municipio"], fuente)
+    valido = df["aod_055_mean"].notna()
+    logger.info(f"[{fuente}] recuperación AOD: {valido.mean() * 100:.1f}% de celdas con AOD válido")
+    por_mun = (valido.groupby(df["municipio"]).mean() * 100).sort_values().round(1)
+    logger.info(f"[{fuente}] menor recuperación por municipio: {dict(por_mun.head(3))}")
+
+    warn_all_nan(df, ["aod_055_mean"], fuente)
+    coverage_report(df, fuente)
+    return df
 
 def clean_static_table(df: pd.DataFrame, fuente: str) -> pd.DataFrame:
     df = df.drop(columns=["source", "year"], errors="ignore")  # evita colisiones en el merge del master
@@ -253,7 +268,6 @@ def clean_static_table(df: pd.DataFrame, fuente: str) -> pd.DataFrame:
         df = df.drop_duplicates(subset=["municipio"], keep="last")
     return df.reset_index(drop=True)
 
-
 def _parse_wkt(s):
     try:
         if pd.isna(s) or not str(s).strip():
@@ -263,10 +277,15 @@ def _parse_wkt(s):
         logger.error(f"[municipios_geom] WKT no parseable: {e}")
         return None
 
-
 def _cve3(x: object) -> str:
     return str(x).strip()[-3:].lstrip("0")
 
+def _detectar_crs(geoms: list) -> str:
+    validas = [g for g in geoms if g is not None] # se usa el WKT para detectar CRS, no la geometría proyectada
+    if not validas:
+        return "EPSG:4326"
+    maximo = max(max(abs(v) for v in g.bounds) for g in validas)
+    return "EPSG:4326" if maximo <= 360 else "EPSG:6372"
 
 def clean_municipios_geom(df: pd.DataFrame) -> pd.DataFrame:
     fuente = "municipios_geom"
@@ -284,12 +303,15 @@ def clean_municipios_geom(df: pd.DataFrame) -> pd.DataFrame:
     if (~tipo_ok).any():
         logger.error(f"[{fuente}] {int((~tipo_ok).sum())} geometrías que no son Polygon/MultiPolygon")
 
-    # Features numéricas útiles para XGBoost (el WKT no se puede usar como feature)
+    # Features numéricas útiles para XGBoost 
     df["geom_area_km2"] = np.nan
     df["geom_centroid_lat"] = np.nan
     df["geom_centroid_lon"] = np.nan
     try:
-        gs = gpd.GeoSeries(list(geoms.where(valida)), index=df.index, crs="EPSG:4326")
+        geoms_ok = [g if v else None for g, v in zip(geoms, valida)]
+        crs_origen = _detectar_crs(geoms_ok)
+        logger.info(f"[{fuente}] CRS de la geometría inferido: {crs_origen}")
+        gs = gpd.GeoSeries(geoms_ok, index=df.index, crs=crs_origen)
         proj = gs.to_crs("EPSG:6372")  # LCC México (INEGI), área correcta
         df["geom_area_km2"] = proj.area / 1e6
         cen = proj.centroid.to_crs("EPSG:4326")
@@ -299,13 +321,18 @@ def clean_municipios_geom(df: pd.DataFrame) -> pd.DataFrame:
         logger.error(f"[{fuente}] no se pudieron calcular área/centroide: {e}")
 
     if BBOX_AGS is not None:
-        dentro = (
-            df["geom_centroid_lon"].between(BBOX_AGS["lon_min"], BBOX_AGS["lon_max"])
-            & df["geom_centroid_lat"].between(BBOX_AGS["lat_min"], BBOX_AGS["lat_max"])
-        )
-        df["qc_geom_centroide_en_bbox"] = dentro
-        if (~dentro).any():
-            logger.error(f"[{fuente}] {int((~dentro).sum())} centroides fuera del bbox -> revisar CRS")
+        try:
+            lon_min, lon_max, lat_min, lat_max = (BBOX_AGS[k] for k in ("lon_min", "lon_max", "lat_min", "lat_max"))
+        except (KeyError, TypeError, IndexError):
+            logger.warning(f"[{fuente}] BBOX_AGS no tiene claves lon_min/lon_max/lat_min/lat_max: se omite validación de bbox")
+        else:
+            dentro = (
+                df["geom_centroid_lon"].between(lon_min, lon_max)
+                & df["geom_centroid_lat"].between(lat_min, lat_max)
+            )
+            df["qc_geom_centroide_en_bbox"] = dentro
+            if (~dentro).any():
+                logger.error(f"[{fuente}] {int((~dentro).sum())} centroides fuera del bbox -> revisar CRS")
 
     if INEGI_MUNICIPIOS_AGS is not None and "cve_agem" in df.columns:
         esperado = df["municipio"].map(INEGI_MUNICIPIOS_AGS)
@@ -318,8 +345,6 @@ def clean_municipios_geom(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def clean_ciclones(df: pd.DataFrame) -> pd.DataFrame:
-    """cenapred.py entrega 1 fila por municipio con columnas l<id>_<slug>_n (conteo) y *_max.
-    Aquí se conservan solo las columnas de capas de ciclones."""
     fuente = "cenapred_ciclones"
     df = df.drop(columns=["source", "year"], errors="ignore")
     df = normalize_municipio(df, fuente=fuente)
@@ -351,12 +376,11 @@ def clean_ciclones(df: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
-# ---------------------------------------------------------------- orquestación
-
 FUENTES_DINAMICAS = {
     "nasa_power": (clean_nasa_power, "nasa_power"),
     "chirps": (clean_chirps, "chirps"),
     "openaq": (clean_openaq, "openaq"),
+    "maiac_aod": (clean_maiac_aod, "maiac_aod"),
 }
 
 FUENTES_ESTATICAS = ["poblacion", "elevacion", "rios", "geometria_municipios", "ciclones"]
@@ -366,7 +390,6 @@ LIMPIADORES_ESTATICOS_ESPECIALES = {
     "ciclones": clean_ciclones,
 }
 
-# Candidatos en orden de prioridad (verifica con `dir data\processed` cuál es el real).
 # geo_utils.py lee la geometría de inegi.parquet/geometria_municipios.parquet.
 MAPEO_RUTAS: dict[str, list[Path]] = {
     "poblacion": [PROCESSED_DIR / "inegi_poblacion.parquet", PROCESSED_DIR / "inegi.parquet" / "poblacion.parquet"],
@@ -377,6 +400,7 @@ MAPEO_RUTAS: dict[str, list[Path]] = {
         PROCESSED_DIR / "inegi_geometria_municipios.parquet",
     ],
     "ciclones": [PROCESSED_DIR / "cenapred.parquet"],
+    "maiac_aod": [PROCESSED_DIR / "maiac_aod.parquet"],
 }
 
 
@@ -388,18 +412,22 @@ def _read_processed(nombre: str) -> pd.DataFrame:
     logger.info(f"{nombre}: leyendo {path}")
     df = ds.dataset(path, format="parquet").to_table().to_pandas() if path.is_dir() else pd.read_parquet(path)
     if "municipio" in df.columns:
-        df["municipio"] = df["municipio"].astype(str)  # category -> str para joins consistentes
+        df["municipio"] = df["municipio"].astype(str) 
     return df
 
-
 def _guardar_master(df: pd.DataFrame, nombre: str, partition_cols: list[str] | None) -> Path:
-    """save_parquet particionado no borra archivos previos: escribir a tmp y reemplazar."""
+    """save_parquet particionado no borra archivos previos: escribir a tmp y reemplazar.
+    El master anterior se conserva como .bak hasta que el nuevo está en su lugar (swap seguro ante fallos)."""
     out = MASTER_DIR / f"{nombre}.parquet"
     tmp = out.with_name(f"{nombre}.tmp.parquet")
+    bak = out.with_name(f"{nombre}.bak.parquet")
     _borrar(tmp)
+    _borrar(bak)
     save_parquet(df, tmp, partition_cols=partition_cols, compression=PARQUET_COMPRESSION)
-    _borrar(out)
+    if out.exists():
+        out.rename(bak)
     tmp.rename(out)
+    _borrar(bak)
     return out
 
 
@@ -407,6 +435,8 @@ def clean_dynamic_source(nombre: str, cleaner_fn, source_tag: str) -> pd.DataFra
     df = _read_processed(nombre)
     logger.info(f"--- Limpiando {nombre} ({len(df)} filas antes) ---")
     df = cleaner_fn(df).copy()
+    if df.duplicated(["date", "municipio"]).any():
+        raise ValueError(f"[{nombre}] quedaron duplicados (date, municipio) tras la limpieza")
     df["year"] = df["date"].dt.year
     df["source"] = source_tag
     out = _guardar_master(df, nombre, ["source", "year"])
