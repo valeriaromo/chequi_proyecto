@@ -11,8 +11,8 @@ def ingest_all(start, end) -> None:
     ingest_cenapred(start, end)
     ingest_chirps(start, end)
     ingest_nasa_power(start, end)
-    ingest_openaq(start, end)
-    ingest_maiac(start, end)
+    ingest_openaq(start, end) # obtener y definir OPENAQ_API_KEY 
+    ingest_maiac(start, end) # sesion de Earth Engine debe estar autenticada y definida en setting.py
 
 if __name__ == "__main__":
     ingest_all(FECHA_INICIO, FECHA_FIN)
