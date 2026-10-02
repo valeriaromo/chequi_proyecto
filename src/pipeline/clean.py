@@ -12,7 +12,7 @@ import pyarrow.dataset as ds
 from shapely import wkt as shapely_wkt
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from config.settings import (FECHA_FIN_MASTER,FECHA_INICIO_MASTER,MASTER_DIR,MUNICIPIOS_AGS,NASA_POWER_PARAMS,PARQUET_COMPRESSION,PROCESSED_DIR,)
-from src.utils.io_utils import save_parquet  # noqa: E402
+from src.utils.io_utils import save_parquet
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
@@ -39,12 +39,12 @@ RANGOS_NASA = {
     "RH2M": (0, 100),
     "WS2M": (0, 40),
     "ALLSKY_SFC_SW_DWN": (0, 40),
-    "PS": (65, 95),            # kPa, ~1900 msnm
+    "PS": (65, 95),            # kPa 1900 msnm
     "PRECTOTCORR": (0, 300),   # mm/día
 }
 RANGO_CHIRPS = (0, 300)        # mm/día
 RANGO_PM25 = (0, 1000)         # µg/m3 (coincide con el filtro de openaq.py)
-PM25_FLAG_SOSPECHOSO = 500     # marca, no borra
+PM25_FLAG_SOSPECHOSO = 500     # marca no borra
 COLS_PM25 = ("pm25_mean", "pm25_max", "pm25_q98")
 RANGO_AOD = (0, 5)             # AOD 550 nm (mismo tope que maiac.py)
 RANGO_PCT = (0, 100)
