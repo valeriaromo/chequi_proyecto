@@ -94,3 +94,11 @@ FECHA_INICIO_MASTER = date(2020, 1, 1)
 
 PARQUET_COMPRESSION = "zstd"   # mejor ratio que snappy para series de tiempo
 PARTITION_COLS = ["source", "year"]
+
+MASTER_TABLE_PATH = MASTER_DIR/ "master_table.parquet"
+REPORTS_DIR = MASTER_DIR/ "reports"
+TARGETS = ["T2M_MAX", "T2M_MIN", "precipitation_mm"]
+HORIZONTES = [1, 3, 7]
+MIN_TRAIN_YEARS = 3   # años mínimos de entrenamiento antes del primer fold
+MARGEN_AOD = 0.01     # AOD se adopta solo si baja el MAE >1 % y gana en >50 % de folds
+SEED = 42
