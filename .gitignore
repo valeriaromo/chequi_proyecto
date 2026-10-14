@@ -1,0 +1,184 @@
+# =====================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.netrc
+_netrc
+.edl*
+credentials*.json
+client_secret*.json
+service_account*.json
+token*.json
+secrets*
+*secret*.yaml
+*secret*.yml
+*secret*.toml
+config/local_settings.py
+config/secrets.py
+.streamlit/secrets.toml
+
+# =====================================================================
+# DATOS (crudos, intermedios y master: derivados de terceros, pesados,
+# con licencias propias: NASA, CHIRPS, MAIAC, INEGI, CENAPRED, OpenAQ)
+data/*
+!data/.gitkeep
+!data/README.md
+
+# Descargas satelitales / geoespaciales / tabulares, donde sea que caigan
+*.hdf
+*.hdf5
+*.h5
+*.he5
+*.nc
+*.nc4
+*.grib
+*.grib2
+*.tif
+*.tiff
+*.img
+*.vrt
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.gpkg
+*.geojson
+*.kml
+*.kmz
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.gz
+*.parquet
+*.feather
+*.arrow
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.xlsm
+*.sqlite
+*.sqlite3
+*.db
+*.duckdb
+
+# Excepciones: archivos pequeños y propios que si se versionan
+!tests/fixtures/*.csv
+!tests/fixtures/*.parquet
+!docs/**/*.csv
+
+# =====================================================================
+# MODELOS Y RESULTADOS DE EXPERIMENTOS
+models/
+outputs/
+outputs_fase2/
+runs/
+mlruns/
+wandb/
+*.joblib
+*.pkl
+*.pickle
+*.ubj
+*.xgb
+*.model
+xgb_decision.csv
+xgb_folds.csv
+status.json
+
+# =====================================================================
+# PYTHON
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+ENV/
+.conda/
+conda-meta/
+
+# =====================================================================
+# JUPYTER
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+# Los notebooks pueden contener salidas con datos, rutas y tokens:
+# limpia las salidas (nbstripout) antes de versionar, o descomenta:
+# *.ipynb
+
+# ======================================================================
+# VS CODE
+.vscode/
+.vscode-test/
+
+# =====================================================================
+# LOGS Y TEMPORALES
+logs/
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+cache/
+.cache/
+tmp/
+temp/
+
+# =====================================================================
+# WINDOWS
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
+*.stackdump
+
+# =====================================================================
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+.spyderproject
+.spyproject
+.cursor/
+.DS_Store
+
+# Build and Release Folders
+bin-debug/
+bin-release/
+[Oo]bj/
+[Bb]in/
+
+# Other files and folders
+.settings/
+
+# Executables
+*.swf
+*.air
+*.ipa
+*.apk
