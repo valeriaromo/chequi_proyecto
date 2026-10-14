@@ -77,3 +77,81 @@ La regla de estado prevista es:
 Para ensayar la regla con un corte histórico, la interfaz prevista es:
 
 El ensayo histórico permite probar el flujo, pero no sustituye el monitoreo con datos posteriores ni valida los aspectos aún no evaluados. La regla de retiro solo es operativa si una persona responsable revisa el estado y puede actuar. Todavía falta nombrar quién tiene esa responsabilidad y autoridad; hasta entonces, el pipeline no debe considerarse un proceso de retiro autónomo ni una alerta atendida.
+
+
+# Datos
+
+data/
+├── processed/   # salida de la ingesta por fuente (no versionado)
+└── master/      # datos validados y tabla final (no versionado)
+    ├── <fuente>.parquet
+    ├── master_table.parquet
+    ├── dim_municipios.parquet
+    └── reports/
+```
+
+`config/settings.py` crea estas carpetas automáticamente.
+
+## Fuentes
+
+| Fuente | Contenido | Credenciales |
+| NASA POWER | T2M, T2M_MAX, T2M_MIN, RH2M, WS2M, PS, radiación, precipitación (~50 km) | No |
+| CHIRPS v2.0 | Precipitación diaria (~5 km) | No |
+| MAIAC (AOD 0.55 µm) | Profundidad óptica de aerosoles | `GEE_PROJECT` (Google Earth Engine) |
+| INEGI | Geometría, población, elevación, ríos | `INEGI_TOKEN` (opcional) |
+| CENAPRED | Ciclones históricos | No |
+| OpenAQ v3 | PM2.5 (solo capital; **excluido del master**) | `OPENAQ_API_KEY` |
+
+
+##### Data Sources, Licensing and Attribution
+This project uses publicly accessible environmental, meteorological, geospatial, and air-quality data to develop a reproducible environmental-risk analysis pipeline for the 11 municipalities of Aguascalientes, Mexico.
+
+### Data sources
+The project retrieves and processes data from the following providers:
+
+| Source | Data used | Official documentation |
+| NASA POWER | Near-surface temperature, relative humidity, wind speed, pressure, solar radiation, and precipitation variables | https://power.larc.nasa.gov/docs/ |
+| CHIRPS v2.0 | Daily precipitation estimates | https://www.chc.ucsb.edu/data/chirps |
+| NASA MAIAC / MODIS | Aerosol Optical Depth (AOD), approximately 0.55 µm | https://developers.google.com/earth-engine/datasets |
+| INEGI | Municipal boundaries, population, elevation, and river-related geographic information | https://www.inegi.org.mx/ |
+| CENAPRED | Historical cyclone-related information, subject to the terms of the specific source dataset | https://www.gob.mx/cenapred |
+| OpenAQ API v3 | PM2.5 measurements for the municipality of Aguascalientes; excluded from the master dataset in the current pipeline | https://docs.openaq.org/ |
+
+### Licensing and attribution policy
+
+The project distinguishes between the software developed for this repository and the third party datasets accessed or processed by its scripts.
+
+- **NASA POWER:** NASA POWER data are acknowledged using the provider's recommended reference and data citation guidance. The version and access date should be recorded for each dataset used.
+- **CHIRPS:** CHIRPS data are publicly available for use and redistribution under the applicable terms of the product. Appropriate source attribution and scientific references should be retained.
+- **MAIAC / MODIS:** The licensing and redistribution conditions of the exact satellite product must be checked independently of the Google Earth Engine service terms. This repository does not claim ownership of the original satellite data.
+- **INEGI:** Information is attributed to INEGI in accordance with its official terms of free use. Source metadata are preserved where applicable, and modifications and derived analyses are identified as work performed by this project.
+- **CENAPRED:** The terms of the specific dataset are reviewed before redistributing source files. Public accessibility alone is not treated as proof of unrestricted redistribution rights.
+- **OpenAQ:** The applicable license and attribution requirements of both OpenAQ and the original data provider are checked before redistributing measurements or derived datasets.
+
+### Data redistribution
+
+This repository prioritizes reproducibility through documented extraction and processing scripts rather than unrestricted redistribution of third party data.
+
+Unless a dataset's applicable terms have been verified, downloaded source files and derived data files are not included in the public repository. Users should obtain the data from the official providers and comply with the applicable terms of use.
+
+Processed datasets, including the master table, may contain information originating from multiple providers. Their redistribution must be assessed against the conditions applicable to the underlying sources.
+
+### API credentials
+
+Credentials are used only to access the relevant services and must not be committed to version control.
+
+The following environment variables may be required:
+
+- `GEE_PROJECT`
+- `INEGI_TOKEN` (optional, depending on the access method)
+- `OPENAQ_API_KEY`
+
+Users should configure their own credentials locally, following the instructions in the project setup documentation. Secret values, personal access tokens, and credential files must remain outside the public repository.
+
+### Disclaimer
+
+This project is an independent research and educational initiative. It is not affiliated with, endorsed by, or officially supported by NASA, Google, the Climate Hazards Center, INEGI, CENAPRED, or OpenAQ.
+
+Environmental datasets may contain measurement uncertainties, estimation errors, missing observations, and changes in methodology or availability. Results generated by this project are independent analyses and should not be interpreted as official assessments or warnings issued by the data providers.
+
+Users are responsible for verifying the applicable data licenses and terms before redistributing datasets, publishing derived products, or using the results for operational or commercial purposes.
