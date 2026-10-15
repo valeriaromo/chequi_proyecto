@@ -21,10 +21,11 @@ config/local_settings.py
 config/secrets.py
 .streamlit/secrets.toml
 
-# =====================================================================
+# ======================================================================
 # DATOS (crudos, intermedios y master: derivados de terceros, pesados,
 # con licencias propias: NASA, CHIRPS, MAIAC, INEGI, CENAPRED, OpenAQ)
 data/*
+src/data_analysis/output/
 !data/.gitkeep
 !data/README.md
 

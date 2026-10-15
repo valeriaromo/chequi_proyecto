@@ -63,20 +63,37 @@ El AOD se mantiene en el master (79.4 % de cobertura), pero sus columnas no se u
 
 Los CSV de estas corridas se escriben en `outputs_fase2/` (`rain_eval.csv` y `scope_<variable>.csv`). Los resultados acotan el uso operacional: temperatura mínima global y ocurrencia de lluvia, ambos a un día; no respaldan poner en producción `T2M_MAX`, horizontes de 3 o 7 días ni una predicción del monto de lluvia.
 
+# Reglas de entrenamiento
+Targets con groupby("municipio")[var].shift(-h), h ≥ 1, fuera del master.
+X excluye date, municipio, year, los targets y qc_aod_imputed.
+Walk-forward por año con ventana expansiva (folds 2023–2026; 2026 es año parcial).
+Baselines: persistencia y climatología por municipio y día del año.
+Corrida A (sin AOD) y corrida B (con AOD).
 
-### Siguiente fase: congelamiento y monitoreo
+# Resultados
+Primer test de XGBoost: AOD no aporta de forma consistente y queda fuera (usar_aod=False). Los skills iniciales, medidos contra una climatología sin suavizar, estaban inflados.
 
-La fase siguiente es `fase3_produccion.py`: congelar el modelo global de `T2M_MIN` a h=1 y el clasificador de ocurrencia de lluvia a h=1, y monitorear el skill móvil de 90 días frente al baseline congelado. No es una nueva fase de entrenamiento o búsqueda de modelos: el artefacto y el baseline de referencia deben permanecer fijos durante el monitoreo para que las alertas sean comparables.
+Fase 2, leakage: 12 cortes aleatorios, y las 53 features no usan información futura y reproducen el master.
+Fase 2, lluvia (≥1 mm): solo hay habilidad en probabilidad de ocurrencia a h=1 (BSS 0.24, AUC 0.85, positivo en los 4 años). A h=3 y h=7 el BSS es negativo. Tweedie es peor que la climatología. El modelo de dos etapas gana en deviance solo en 2 de 4 años a h=1, por lo que el monto de lluvia no es confiable.
+Fase 2, T2M_MIN: skill global contra el mejor baseline suavizado de 0.19 a h=1 (positivo en los 4 años), 0.03 a h=3 y −0.03 a h=7. El modelo global supera al de por municipio en 9 de 12 combinaciones, así que se elige el global.
+Fase 2, T2M_MAX: skill de 0.003, −0.04 y −0.045 a h=1, 3 y 7, con un patrón que cambia de signo entre años (pierde en 2023-24, gana en 2025-26). Se excluye del piloto.
+Conclusión: el piloto defendible es T2M_MIN global a h=1 y probabilidad de lluvia a h=1, a escala municipal, no vecinal.
 
-La regla de estado prevista es:
 
-- **RETIRAR:** el skill es negativo hoy y también era negativo hace 90 días.
-- **ALERTA:** el skill es negativo hoy, pero no se cumple la condición de retiro.
-- Si el skill no es negativo hoy, no se activa ninguna de esas dos condiciones.
+# Monitoreo de resultados
 
-Para ensayar la regla con un corte histórico, la interfaz prevista es:
+La fase 3 en `monitor_rain-py` congela esos dos modelos (train [FECHA_CORTE]) y monitorea con monitor [VENTANA].
+El monitoreo calcula el skill móvil de 90 días contra el baseline congelado. Si es negativo hoy y hace 90 días, el estado es RETIRAR; si solo es negativo hoy, ALERTA.
+También vigila el porcentaje de NaN en las columnas base. Para ensayarlo hace falta un corte anterior a mediados de 2025 y al menos 180 días posteriores.
 
-El ensayo histórico permite probar el flujo, pero no sustituye el monitoreo con datos posteriores ni valida los aspectos aún no evaluados. La regla de retiro solo es operativa si una persona responsable revisa el estado y puede actuar. Todavía falta nombrar quién tiene esa responsabilidad y autoridad; hasta entonces, el pipeline no debe considerarse un proceso de retiro autónomo ni una alerta atendida.
+# Pendientes y límites conocidos actualmente
+
+Definir quién re-entrena, monitorea y retira el modelo.
+Falta probar que la construcción de targets no tenga leakage; la prueba actual solo cubre features.
+Tampoco se ha verificado la calibración de las probabilidades de lluvia.
+Con 4 folds, los intervalos de confianza no son creíbles.
+Falta una regla para detectar cambios en NASA POWER, CHIRPS o MAIAC (revisiones históricas, flags de QA).
+Hay que revisar los términos de uso de INEGI, CENAPRED y OpenAQ.
 
 
 # Datos
