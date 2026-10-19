@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import gzip
 import logging
@@ -10,7 +9,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import rasterio
