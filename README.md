@@ -11,8 +11,6 @@
 
 ### BASES DE DATOS ###
 
-HOLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-
 `inegi.py` (geometría + población + elevación + ríos)
 `chirps.py` (precipitación, zonal sobre polígono)
 `nasa_power.py` (meteorología, centroide real)
@@ -28,11 +26,6 @@ Cada script sigue produciendo un parquet en `data/processed/` con:
  `municipio` sigue siendo el campo de join universal entre fuentes.
 
 `config/settings.py` con constantes: `BBOX_AGS`, `MUNICIPIOS_AGS` con centroides fijos, `INEGI_MUNICIPIOS_AGS` con claves AGEM, rangos de fechas `FECHA_INICIO`/`FECHA_FIN` para ingesta diaria y `FECHA_INICIO_MASTER`/`FECHA_FIN_MASTER` para la tabla final, rutas RAW/PROCESSED/MASTER_DIR. 
-
-
-                                #################################################
-                                ######## Limpieza y Preparación de datos ########
-                                #################################################
 
 `clean.py` lee cada parquet de data/processed/ y escribe una versión validada en data/master/, sin modificar el origen. El problema de datos incompletos de OpenAQ se resuelve con la arquitectura que usa el maiac aod. Cada fuente tiene su limpiador, registrado en `FUENTES_DINAMICAS` (llave date+municipio) o `FUENTES_ESTATICAS` (llave municipio)
 Todos aplican los mismos pasos: 
@@ -103,17 +96,6 @@ source .venv/bin/activate
 
 
 # Datos
-
-data/
-├── processed/   # salida de la ingesta por fuente (no versionado)
-└── master/      # datos validados y tabla final (no versionado)
-    ├── <fuente>.parquet
-    ├── master_table.parquet
-    ├── dim_municipios.parquet
-    └── reports/
-```
-
-`config/settings.py` crea estas carpetas automáticamente.
 
 ## Fuentes
 
