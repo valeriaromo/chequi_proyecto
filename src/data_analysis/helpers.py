@@ -147,3 +147,4 @@ def annual_rain_by_muni(d):
              .groupby("municipio").mean())
         return s, f"mean annual total over full years {full[0]}-{full[-1]}"
     return d.groupby("municipio")["precipitation_mm"].mean() * 365.25, "mean daily x 365.25"
+
