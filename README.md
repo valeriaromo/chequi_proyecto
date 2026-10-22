@@ -11,6 +11,8 @@
 
 ### BASES DE DATOS ###
 
+HOLSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+
 `inegi.py` (geometría + población + elevación + ríos)
 `chirps.py` (precipitación, zonal sobre polígono)
 `nasa_power.py` (meteorología, centroide real)
