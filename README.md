@@ -11,7 +11,7 @@
 
 ### BASES DE DATOS ###
 
-HOLSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+HOLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
 `inegi.py` (geometría + población + elevación + ríos)
 `chirps.py` (precipitación, zonal sobre polígono)
