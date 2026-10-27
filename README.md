@@ -1,4 +1,4 @@
-#################################################################################################################################################
+
 
     ######  #     #   #######   ######   #     #   #######      #######   #######   ######   #     #   #######   ######  #######  #######
     #       #     #   #         #    #   #     #      #         #     #   #     #   #    #   #     #   #         #          #     #     #
@@ -7,7 +7,6 @@
     ######  #     #   #######   ######   #######   #######      #         #    #    ######      #      ######    ######     #     #######  
                                       # 
                                       
-##################################################################################################################################################
 
 ### BASES DE DATOS ###
 
@@ -77,14 +76,21 @@ La fase 3 en `monitor_rain-py` congela esos dos modelos (train [FECHA_CORTE]) y 
 El monitoreo calcula el skill móvil de 90 días contra el baseline congelado. Si es negativo hoy y hace 90 días, el estado es RETIRAR; si solo es negativo hoy, ALERTA.
 También vigila el porcentaje de NaN en las columnas base. Para ensayarlo hace falta un corte anterior a mediados de 2025 y al menos 180 días posteriores.
 
-# Pendientes y límites conocidos actualmente
 
-Definir quién re-entrena, monitorea y retira el modelo.
+# Resultados de data analysis
+- **Importancia de la estacionalidad:** Muchas correlaciones iniciales disminuyen después de eliminar el ciclo estacional, por lo que el análisis de anomalías permite identificar relaciones más relevantes.
+- **Variables predictoras potenciales:** La persistencia de la temperatura (T2M y T2M_MIN), la velocidad del viento (WS2M), la temperatura máxima (T2M_MAX) y la profundidad óptica de aerosoles (AOD) muestran señales prometedoras para predecir la temperatura mínima del día siguiente.
+- **Limitaciones de los datos:** Los datos de NASA POWER ofrecen información espacial independiente limitada entre los municipios; AOD presenta aproximadamente un 21 % de valores faltantes y la precipitación contiene una gran proporción de valores cero.
+
+**Dirección del proyecto**
+Los análisis indican que el proyecto está **preparado para la identificación de patrones**. La siguiente etapa consiste en explorar relaciones no lineales, seleccionar las variables más informativas y evaluar modelos de aprendizaje automático frente a una línea base de climatología estacional, utilizando una validación que respete el orden temporal de los datos.
+
+# Pendientes y límites conocidos actualmente
 Falta probar que la construcción de targets no tenga leakage; la prueba actual solo cubre features.
 Tampoco se ha verificado la calibración de las probabilidades de lluvia.
 Con 4 folds, los intervalos de confianza no son creíbles.
 Falta una regla para detectar cambios en NASA POWER, CHIRPS o MAIAC (revisiones históricas, flags de QA).
-Hay que revisar los términos de uso de INEGI, CENAPRED y OpenAQ.
+
 
 # Ejecución
 Comandos para instalar requirements.txt:
