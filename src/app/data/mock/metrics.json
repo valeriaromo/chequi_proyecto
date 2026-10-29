@@ -1,0 +1,53 @@
+{
+  "source": "README walk-forward results (aggregated for display)",
+  "variables": [
+    {
+      "variable": "rain_occurrence",
+      "label": "Rain occurrence (>=1 mm)",
+      "horizons": [
+        {"h": 1, "skill": 0.24, "bss": 0.24, "auc": 0.85},
+        {"h": 3, "skill": -0.05, "bss": -0.05, "auc": null},
+        {"h": 7, "skill": -0.11, "bss": -0.11, "auc": null}
+      ]
+    },
+    {
+      "variable": "t2m_min",
+      "label": "Minimum temperature",
+      "horizons": [
+        {"h": 1, "skill": 0.19, "bss": null, "auc": null},
+        {"h": 3, "skill": 0.03, "bss": null, "auc": null},
+        {"h": 7, "skill": -0.03, "bss": null, "auc": null}
+      ]
+    },
+    {
+      "variable": "t2m_max",
+      "label": "Maximum temperature (excluded)",
+      "horizons": [
+        {"h": 1, "skill": 0.003, "bss": null, "auc": null},
+        {"h": 3, "skill": -0.04, "bss": null, "auc": null},
+        {"h": 7, "skill": -0.045, "bss": null, "auc": null}
+      ]
+    }
+  ],
+  "pca_scatter": {
+    "explained_variance": [0.38, 0.21],
+    "points": [
+      {"pc1": -1.2, "pc2": 0.4, "label": "Aguascalientes"},
+      {"pc1": -0.9, "pc2": 0.1, "label": "Asientos"},
+      {"pc1": 0.7, "pc2": -0.3, "label": "Calvillo"},
+      {"pc1": 1.1, "pc2": 0.8, "label": "Jesus Maria"},
+      {"pc1": 0.2, "pc2": -0.9, "label": "Pabellon de Arteaga"}
+    ]
+  },
+  "shap_example": {
+    "base_value": 9.1,
+    "output_value": 8.4,
+    "features": [
+      {"name": "T2M_MIN (t-1)", "value": 8.6, "shap": -0.35},
+      {"name": "WS2M (t-1)", "value": 2.4, "shap": -0.18},
+      {"name": "T2M (t-1)", "value": 20.1, "shap": 0.12},
+      {"name": "Seasonality (sin)", "value": 0.42, "shap": 0.09},
+      {"name": "Rain 30d sum", "value": 12.0, "shap": -0.08}
+    ]
+  }
+}

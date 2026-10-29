@@ -1,0 +1,38 @@
+{
+  "generated_at": "29/10/2026 06:00",
+  "by_municipality": {
+    "Aguascalientes": {
+      "municipio": "Aguascalientes",
+      "date": "29/10/2026",
+      "t2m_min_pred": 8.4,
+      "t2m_min_baseline": 9.1,
+      "p_rain": 0.62,
+      "skill_t2m_min": 0.19,
+      "skill_rain": 0.24,
+      "status": "OK",
+      "note": "PLACEHOLDER — connect to outputs_fase2/ and monitor_rain.py"
+    },
+    "Asientos": {
+      "municipio": "Asientos",
+      "date": "29/10/2026",
+      "t2m_min_pred": 6.8,
+      "t2m_min_baseline": 7.5,
+      "p_rain": 0.55,
+      "skill_t2m_min": 0.17,
+      "skill_rain": 0.22,
+      "status": "OK",
+      "note": "PLACEHOLDER"
+    },
+    "Calvillo": {
+      "municipio": "Calvillo",
+      "date": "29/10/2026",
+      "t2m_min_pred": 7.9,
+      "t2m_min_baseline": 8.6,
+      "p_rain": 0.48,
+      "skill_t2m_min": 0.15,
+      "skill_rain": 0.20,
+      "status": "ALERTA",
+      "note": "PLACEHOLDER"
+    }
+  }
+}

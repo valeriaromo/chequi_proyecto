@@ -1,0 +1,46 @@
+[
+  {
+    "slug": "pca",
+    "title": "PCA — Principal Component Analysis",
+    "summary": "PCA is a technique that compresses many correlated variables into a few new ones (principal components) that keep most of the information.",
+    "how_it_is_used": "In Chequi we use PCA to explore the climate data and find patterns between municipalities and variables. It is an exploratory step; it helps us understand the data before training predictive models.",
+    "key_takeaways": [
+      "Reduces dozens of variables to a handful of components.",
+      "Reveals which municipalities behave similarly.",
+      "Does not predict by itself; it supports analysis."
+    ]
+  },
+  {
+    "slug": "xgboost",
+    "title": "XGBoost — Gradient Boosted Trees",
+    "summary": "XGBoost is a machine learning algorithm that combines many small decision trees to make accurate predictions from tabular data.",
+    "how_it_is_used": "We use XGBoost to predict, for the next day, the probability of rain and the minimum temperature, per municipality. Only the models that beat a climate baseline are kept in production.",
+    "key_takeaways": [
+      "Handles missing values natively.",
+      "Works well with the tabular climate features we build.",
+      "Only the rain occurrence and minimum temperature (next day) models are active."
+    ]
+  },
+  {
+    "slug": "walk-forward",
+    "title": "Walk-forward validation",
+    "summary": "Walk-forward validation trains the model only on past data and tests it on future data, moving the window forward year by year.",
+    "how_it_is_used": "We use walk-forward folds from 2023 to 2026 to estimate how well each model will perform on future days. This mirrors real operation, where the model can never see the future.",
+    "key_takeaways": [
+      "Respects the time order of the data.",
+      "Compares the model against climate baselines.",
+      "Skill > 0 means the model beats the baseline."
+    ]
+  },
+  {
+    "slug": "shap",
+    "title": "SHAP — Feature Attribution",
+    "summary": "SHAP explains each prediction by attributing how much each input feature pushed the result up or down.",
+    "how_it_is_used": "For each forecast we can show why the model predicted a colder or warmer night, or a higher or lower chance of rain. This makes the tool easier to trust and audit.",
+    "key_takeaways": [
+      "Explains individual predictions.",
+      "Shows which variables matter most.",
+      "Supports auditing and communication with users."
+    ]
+  }
+]

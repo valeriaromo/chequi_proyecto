@@ -1,0 +1,42 @@
+{
+  "generated_at": "29/10/2026 06:00",
+  "items": [
+    {
+      "municipio": "Aguascalientes",
+      "variable": "rain_occurrence",
+      "status": "OK",
+      "skill_90d": 0.21,
+      "skill_90d_previous": 0.18,
+      "reason": "Skill positive today and 90 days ago."
+    },
+    {
+      "municipio": "Aguascalientes",
+      "variable": "t2m_min",
+      "status": "OK",
+      "skill_90d": 0.19,
+      "skill_90d_previous": 0.17,
+      "reason": "Skill positive today and 90 days ago."
+    },
+    {
+      "municipio": "Calvillo",
+      "variable": "rain_occurrence",
+      "status": "ALERTA",
+      "skill_90d": -0.03,
+      "skill_90d_previous": 0.11,
+      "reason": "Skill negative today, positive 90 days ago."
+    },
+    {
+      "municipio": "Calvillo",
+      "variable": "t2m_min",
+      "status": "RETIRAR",
+      "skill_90d": -0.06,
+      "skill_90d_previous": -0.04,
+      "reason": "Skill negative today and 90 days ago. Retire."
+    }
+  ],
+  "nan_pct": {
+    "nasa_power": 0.0,
+    "chirps": 0.01,
+    "maiac_aod": 0.21
+  }
+}

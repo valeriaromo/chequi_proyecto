@@ -93,18 +93,51 @@ Falta una regla para detectar cambios en NASA POWER, CHIRPS o MAIAC (revisiones 
 
 
 # Ejecución
-Comandos para instalar requirements.txt:
+Comandos para instalar los requirements:
+
 Windows: install.bat
 Linux/MacOS: bash install.sh
 
-Activar env con:
+Importante activar env con:
 source .venv/bin/activate
+
+# App
+
+Aplicación web (src/app/)
+Aplicación Flask interna para revisar las predicciones de Chequi, las alertas de monitoreo y la metodología. Actualmente es de solo lectura y funciona con datos simulados: cada número proviene de archivos JSON en src/app/data/mock/. Conectar artefactos reales del modelo solo requiere modificar src/app/services/.
+
+Ejecutar con: python3 run.py
+
+## Rutas
+/	Resumen diario por municipio (T2M_MIN, P(lluvia), habilidades, estado)
+/alerts	Estado de monitoreo de 90 días (OK / ALERTA / RETIRAR) + cobertura de NaN
+/model	Índice de tecnologías (PCA, XGBoost, walk-forward, SHAP)
+/model/<slug>	Una página por tecnología, con tablas/gráficos
+/docs	Fuentes de datos, licenciamiento, limitaciones conocidas
+
+## Endpoints JSON
+GET /api/predictions?municipio=<name>	Devuelve el resumen de un municipio
+GET /api/alerts	Devuelve los elementos de monitoreo + nan_pct
+GET /api/metrics	Devuelve el resumen walk-forward, el dispersograma PCA y el ejemplo SHAP
+GET /api/functionality	Devuelve las descripciones de las tecnologías
+
+## Cómo funciona
+Monolito renderizado en el servidor. Jinja + JS vanilla + Chart.js/Plotly vía CDN. Sin paso de compilación.
+
+services/ es la única costura. Cada módulo lee hoy un JSON simulado y lleva un comentario # TODO(modelo): que apunta al artefacto objetivo (outputs_fase2/*.csv, monitor_rain.py, modelos congelados).
+
+métricas vía context processor. Inyectadas en create_app() y envueltas en try/except para que un metrics.json corrupto degrade de forma controlada en lugar de devolver un 500 en cada página.
+
+## Cambios una vez implementado el modelo
+services/predictions.py: Reemplazar _load_mock() por un adaptador que lea outputs_fase2/*.csv + modelos congelados. Mantener la forma del dict.
+services/alerts.py:	Derivar el estado a partir de la regla de 90 días (RETIRAR si la habilidad < 0 hoy y hace 90 días; ALERTA si solo hoy; en caso contrario OK). Poblar nan_pct.
+services/metrics.py: Leer rain_eval.csv, scope_T2M_MIN.csv, scope_T2M_MAX.csv; poblar pca_scatter y shap_example.
+data/mock/functionality.json: Solo redacción; sin cambios de código.
+Autenticación (más adelante):	__init__.py + routes/auth.py	Agregar @login_required en las vistas; proteger /api/* con token.
+services/*.py:	Elegir un único directorio canónico (por ejemplo, CHEQUI_OUTPUT_DIR); no codificarlo de forma fija.
 
 
 # Datos
-
-## Fuentes
-
 | Fuente | Contenido | Credenciales |
 | NASA POWER | T2M, T2M_MAX, T2M_MIN, RH2M, WS2M, PS, radiación, precipitación (~50 km) | No |
 | CHIRPS v2.0 | Precipitación diaria (~5 km) | No |
