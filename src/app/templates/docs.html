@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Docs. ChequiProyecto{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <h1>Documentation</h1>
+  <p class="muted">Sources, licensing, and known limits.</p>
+</section>
+
+{% include "partials/fuentes.html" %}
+
+<section>
+  <h2>Known limits</h2>
+  <ul>
+    <li>Rain amount and T2M_MAX are not used in production.</li>
+    <li>Rain occurrence and T2M_MIN are active only at horizon 1 day.</li>
+    <li>AOD is kept in the master table but not used as a model feature.</li>
+    <li>OpenAQ is excluded from the master table.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Attribution</h2>
+  <p>This project uses publicly accessible data from NASA POWER, CHIRPS, INEGI, CENAPRED and MAIAC. It is not endorsed by any of these providers.</p>
+</section>
+{% endblock %}

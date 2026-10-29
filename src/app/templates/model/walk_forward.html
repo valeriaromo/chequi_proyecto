@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Walk-forward. ChequiProyecto{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <h1>{{ block.title }}</h1>
+  <p class="muted">{{ block.summary }}</p>
+</section>
+
+<section>
+  <h2>How we use it</h2>
+  <p>{{ block.how_it_is_used }}</p>
+  <ul>
+    {% for k in block.key_takeaways %}<li>{{ k }}</li>{% endfor %}
+  </ul>
+</section>
+
+<section>
+  <h2>Illustrative folds (placeholder)</h2>
+  <div class="folds">
+    {% for year in [2023, 2024, 2025, 2026] %}
+      <div class="fold"><strong>{{ year }}</strong><span>train ≤ 31/12/{{ year - 1 }}</span></div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

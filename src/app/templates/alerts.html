@@ -1,0 +1,31 @@
+{# src/templates/alerts.html #}
+{% extends "base.html" %}
+{% from "partials/tabla.html" import tabla %}
+{% block title %}Alerts — Chequi{% endblock %}
+{% block styles %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <h1>Monitoring alerts</h1>
+  <p class="muted">90-day monitoring rule. Generated at {{ payload.generated_at }} — placeholder data.</p>
+</section>
+
+<section>
+  {% set rows = [] %}
+  {% for item in payload['items'] %}
+    {% set _ = rows.append([item.municipio, item.variable, '%.2f'|format(item.skill_90d), '%.2f'|format(item.skill_90d_previous), item.status, item.reason]) %}
+  {% endfor %}
+  {{ tabla(headers=["Municipality","Variable","Skill 90d","Skill 90d (prev)","Status","Reason"], rows=rows, caption="Current monitoring status") }}
+</section>
+
+<section>
+  <h2>Missing data (% NaN)</h2>
+  <ul class="nan-list">
+    {% for k, v in payload.nan_pct.items() %}
+      <li><strong>{{ k }}</strong>: {{ '%.2f'|format(v * 100) }}%</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

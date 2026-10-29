@@ -1,0 +1,46 @@
+{# src/templates/model/pca.html #}
+{% extends "base.html" %}
+{% block title %}PCA. ChequiProyecto{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <h1>{{ block.title }}</h1>
+  <p class="muted">{{ block.summary }}</p>
+</section>
+
+<section>
+  <h2>How the tool works</h2>
+  <p>{{ block.how_it_is_used }}</p>
+  <ul>
+    {% for k in block.key_takeaways %}<li>{{ k }}</li>{% endfor %}
+  </ul>
+</section>
+
+<section>
+  <h2>Example — municipalities in PC space</h2>
+  <div class="chart-canvas-wrap" style="height:320px;">
+    <canvas id="pca-scatter"></canvas>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // PLACEHOLDER: real PCA scatter comes from the pipeline.
+  // TODO(modelo): replace with data from /api/metrics -> pca_scatter.
+  const PCA_MOCK = {
+    xLabel: "PC1 (38%)",
+    yLabel: "PC2 (21%)",
+    points: [
+      {x: -1.2, y: 0.4, label: "Aguascalientes"},
+      {x: -0.9, y: 0.1, label: "Asientos"},
+      {x: 0.7, y: -0.3, label: "Calvillo"},
+      {x: 1.1, y: 0.8, label: "Jesús María"},
+      {x: 0.2, y: -0.9, label: "Pabellón de Arteaga"}
+    ]
+  };
+  document.addEventListener("DOMContentLoaded", () => {
+    ChequiCharts.pcaScatter("pca-scatter", PCA_MOCK);
+  });
+</script>
+{% endblock %}

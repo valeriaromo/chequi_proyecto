@@ -1,0 +1,14 @@
+{# src/templates/partials/grafico.html
+   Usage:
+     {% from "partials/grafico.html" import grafico %}
+     {{ grafico(id="skill-chart", title="Skill per horizon") }}
+   The JS side looks for canvas[data-chart-id] and calls the right helper.
+#}
+{% macro grafico(id, title, height=280) %}
+<figure class="chart-card">
+  <figcaption>{{ title }}</figcaption>
+  <div class="chart-canvas-wrap" style="height: {{ height }}px;">
+    <canvas id="{{ id }}" data-chart-id="{{ id }}"></canvas>
+  </div>
+</figure>
+{% endmacro %}

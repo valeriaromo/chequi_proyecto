@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Functionality. ChequiProyecto{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <h1>Functionality</h1>
+  <p class="muted">A general, overview of the technologies behind ChequiProyecto.</p>
+</section>
+
+<section class="cards">
+  {% for b in blocks %}
+  <article class="card">
+    <header><h3>{{ b.title }}</h3></header>
+    <p>{{ b.summary }}</p>
+    <p>{{ b.how_it_is_used }}</p>
+    <ul>
+      {% for k in b.key_takeaways %}<li>{{ k }}</li>{% endfor %}
+    </ul>
+    <a class="btn" href="{{ url_for('model.detail', slug=b.slug) }}">Read more →</a>
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}

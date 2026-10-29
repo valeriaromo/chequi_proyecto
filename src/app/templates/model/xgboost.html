@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% from "partials/tabla.html" import tabla %}
+{% block title %}XGBoost. ChequiProyecto{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <h1>{{ block.title }}</h1>
+  <p class="muted">{{ block.summary }}</p>
+</section>
+
+<section>
+  <h2>How the tool works</h2>
+  <p>{{ block.how_it_is_used }}</p>
+  <ul>
+    {% for k in block.key_takeaways %}<li>{{ k }}</li>{% endfor %}
+  </ul>
+</section>
+
+<section>
+  <h2>Skills by variable and horizon</h2>
+  {% set rows = [] %}
+  {% for v in metrics.variables %}
+    {% for h in v.horizons %}
+      {% set _ = rows.append([v.label, h.h, h.skill, h.bss, h.auc]) %}
+    {% endfor %}
+  {% endfor %}
+  {{ tabla(headers=["Variable","Horizon (days)","Skill","BSS","AUC"], rows=rows, caption="Walk-forward summary (placeholder)") }}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    fetch("{{ url_for('api.metrics') }}")
+      .then(r => r.json())
+      .then(data => ChequiCharts.skillBars("skill-bars", data))
+      .catch(() => { /* silent — placeholder only */ });
+  });
+</script>
+{% endblock %}

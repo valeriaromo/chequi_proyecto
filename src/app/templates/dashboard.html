@@ -1,0 +1,42 @@
+{# src/templates/dashboard.html #}
+{% extends "base.html" %}
+{% from "partials/tabla.html" import tabla %}
+{% block title %}Dashboard. ChequiProyecto{% endblock %}
+{% block styles %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <h1>Daily snapshot</h1>
+  <p class="muted">Generated at {{ snapshot.generated_at }} — placeholder data.</p>
+</section>
+
+<section class="cards">
+  {% for m, p in snapshot.by_municipality.items() %}
+  <article class="card">
+    <header>
+      <h3>{{ p.municipio }}</h3>
+      <span class="badge badge-{{ p.status|lower }}">{{ p.status }}</span>
+    </header>
+    <dl class="kv">
+      <dt>Date</dt><dd>{{ p.date }}</dd>
+      <dt>Min temp (pred.)</dt><dd>{{ p.t2m_min_pred }} °C</dd>
+      <dt>Min temp (baseline)</dt><dd>{{ p.t2m_min_baseline }} °C</dd>
+      <dt>P(rain)</dt><dd>{{ '%.2f'|format(p.p_rain) }}</dd>
+      <dt>Skill T2M_MIN</dt><dd>{{ '%.2f'|format(p.skill_t2m_min) }}</dd>
+      <dt>Skill rain</dt><dd>{{ '%.2f'|format(p.skill_rain) }}</dd>
+    </dl>
+  </article>
+  {% endfor %}
+</section>
+
+<section>
+  <h2>Predictions overview</h2>
+  {% set rows = [] %}
+  {% for m, p in snapshot.by_municipality.items() %}
+    {% set _ = rows.append([p.municipio, p.date, p.t2m_min_pred, p.p_rain, p.skill_rain, p.status]) %}
+  {% endfor %}
+  {{ tabla(headers=["Municipality","Date","T2M_MIN","P(rain)","Skill (rain)","Status"], rows=rows, caption="Current snapshot (placeholder)") }}
+</section>
+{% endblock %}
