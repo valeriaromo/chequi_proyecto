@@ -142,9 +142,12 @@ def fig_loadings(res: PCAResult, path: Path, n: int = N_PC) -> str:
     return _save(fig, path)
 
 
-def fig_projections(res: PCAResult, flag: pd.Series, path: Path) -> str:
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.6), layout="constrained")
-    for ax, (i, j) in zip(axes, [(0, 1), (0, 2), (1, 2)]):
+def fig_projections(res: PCAResult, flag: pd.Series, path: Path, n: int = N_PC) -> str:
+    import itertools
+    pairs = list(itertools.combinations(range(n), 2))
+    fig, axes = plt.subplots(1, len(pairs), figsize=(5 * len(pairs), 4.6), layout="constrained", squeeze=False)
+    axes = axes[0]
+    for ax, (i, j) in zip(axes, pairs):
         x, y = res.scores.iloc[:, i], res.scores.iloc[:, j]
         hb = ax.hexbin(x, y, gridsize=45, bins="log", mincnt=1, cmap="viridis")
         ax.scatter(x[flag], y[flag], s=8, color="#E45756", label="Unusual days")
@@ -152,7 +155,7 @@ def fig_projections(res: PCAResult, flag: pd.Series, path: Path) -> str:
                ylabel=f"PC{j + 1} ({res.ratio[j] * 100:.1f}% variance)", title=f"PC{i + 1} vs PC{j + 1}")
         ax.legend(fontsize=7)
     fig.colorbar(hb, ax=axes.tolist(), label="Days (log count)")
-    fig.suptitle("Two-component projections of daily anomalies", fontweight="bold")
+    fig.suptitle(f"Two-component projections (first {n} PCs)", fontweight="bold")
     return _save(fig, path)
 
 
