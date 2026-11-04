@@ -1,15 +1,134 @@
-{# src/templates/dashboard.html #}
 {% extends "base.html" %}
 {% from "partials/tabla.html" import tabla %}
 {% block title %}Dashboard. ChequiProyecto{% endblock %}
+
 {% block styles %}
   <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+
+  <style>
+    /* --- ESTILOS DEL BANNER --- */
+    .welcome-banner {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: flex-start;
+      background-color: #f4f1ea;
+      border: 3px solid #7cc271;
+      border-radius: 24px;
+      padding: 2rem 3rem;
+      margin: 2rem 0;
+      gap: 2.5rem;
+    }
+
+    .welcome-banner-image {
+      flex: 0 0 270px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .welcome-banner-image img {
+      display: block;
+      width: 100%;
+      max-width: 200px;
+      height: auto;
+      object-fit: contain;
+    }
+
+    .welcome-banner-content {
+      flex: 1;
+      min-width: 0;
+      text-align: left;
+    }
+
+    .welcome-banner-content h2 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-top: 0;
+      margin-bottom: 1rem;
+      color: #2c2c2c;
+      line-height: 1.1;
+      font-family: Georgia, serif;
+      text-align: left;
+    }
+
+    .welcome-banner-content p {
+      font-size: 1rem;
+      color: #555;
+      margin-bottom: 0;
+      line-height: 1.5;
+      text-align: left;
+    }
+
+    /* --- SOLUCIÓN PARA QUE SE VEAN TODAS LAS TARJETAS --- */
+    .cards {
+      display: grid !important; /* Forzamos grid */
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)) !important; /* Se adapta al ancho */
+      gap: 1.5rem;
+      width: 100%;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    /* --- RESPONSIVE --- */
+    @media (max-width: 768px) {
+      .welcome-banner {
+        flex-direction: column;
+        padding: 2rem;
+        gap: 1.5rem;
+        align-items: center;
+      }
+
+      .welcome-banner-image {
+        flex: 0 0 auto;
+        width: 150px;
+      }
+
+      .welcome-banner-content {
+        width: 100%;
+        text-align: left;
+      }
+
+      .welcome-banner-content h2 {
+        font-size: 2rem;
+      }
+      
+      /* En móvil forzamos 1 columna */
+      .cards {
+        grid-template-columns: 1fr !important;
+      }
+    }
+  </style>
 {% endblock %}
 
 {% block content %}
+
+<section class="welcome-banner">
+  <div class="welcome-banner-image">
+    <img
+      src="{{ url_for('static', filename='img/logo-chequi-no-bg.svg') }}"
+      alt="Logo ChequiProyecto"
+    >
+  </div>
+
+  <div class="welcome-banner-content">
+    <h2>ChequiProyecto</h2>
+    <p>
+      Tu panel central para el monitoreo climático de Aguascalientes.
+      Revisa las predicciones, explora las alertas y mantente un paso adelante.
+    </p>
+  </div>
+</section>
+
 <section class="page-head">
   <h1>Daily snapshot</h1>
-  <p class="muted">Generated at {{ snapshot.generated_at }} — placeholder data.</p>
+  <p class="muted">
+    Generated at {{ snapshot.generated_at }} — placeholder data.
+  </p>
 </section>
 
 <section class="cards">
@@ -19,6 +138,7 @@
       <h3>{{ p.municipio }}</h3>
       <span class="badge badge-{{ p.status|lower }}">{{ p.status }}</span>
     </header>
+
     <dl class="kv">
       <dt>Date</dt><dd>{{ p.date }}</dd>
       <dt>Min temp (pred.)</dt><dd>{{ p.t2m_min_pred }} °C</dd>
@@ -33,10 +153,24 @@
 
 <section>
   <h2>Predictions overview</h2>
+
   {% set rows = [] %}
   {% for m, p in snapshot.by_municipality.items() %}
-    {% set _ = rows.append([p.municipio, p.date, p.t2m_min_pred, p.p_rain, p.skill_rain, p.status]) %}
+    {% set _ = rows.append([
+      p.municipio,
+      p.date,
+      p.t2m_min_pred,
+      p.p_rain,
+      p.skill_rain,
+      p.status
+    ]) %}
   {% endfor %}
-  {{ tabla(headers=["Municipality","Date","T2M_MIN","P(rain)","Skill (rain)","Status"], rows=rows, caption="Current snapshot (placeholder)") }}
+
+  {{ tabla(
+    headers=["Municipality", "Date", "T2M_MIN", "P(rain)", "Skill (rain)", "Status"],
+    rows=rows,
+    caption="Current snapshot (placeholder)"
+  ) }}
 </section>
+
 {% endblock %}

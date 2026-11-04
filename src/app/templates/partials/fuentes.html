@@ -1,9 +1,40 @@
 <section class="fuentes">
   <h2>Data sources</h2>
+
   <ul class="fuentes-grid">
-    <li><img src="{{ url_for('static', filename='img/logo-nasa.svg') }}" alt="NASA POWER"><span>NASA POWER</span></li>
-    <li><img src="{{ url_for('static', filename='img/logo-chirps.svg') }}" alt="CHIRPS"><span>CHIRPS v2.0</span></li>
-    <li><img src="{{ url_for('static', filename='img/logo-inegi.svg') }}" alt="INEGI"><span>INEGI</span></li>
-    <li><img src="{{ url_for('static', filename='img/logo-cenapred.svg') }}" alt="CENAPRED"><span>CENAPRED</span></li>
+    <li>
+      <a href="https://power.larc.nasa.gov/" target="_blank" rel="noopener noreferrer">
+        <img src="{{ url_for('static', filename='img/logo-nasa.svg') }}" alt="NASA POWER">
+        <span>NASA POWER</span>
+      </a>
+    </li>
+
+    <li>
+      <a href="https://www.chc.ucsb.edu/data/chirps" target="_blank" rel="noopener noreferrer">
+        <img src="{{ url_for('static', filename='img/logo-chirps.svg') }}" alt="CHIRPS">
+        <span>CHIRPS v2.0</span>
+      </a>
+    </li>
+
+    <li>
+      <a href="https://www.inegi.org.mx/" target="_blank" rel="noopener noreferrer">
+        <img src="{{ url_for('static', filename='img/logo-inegi.svg') }}" alt="INEGI">
+        <span>INEGI</span>
+      </a>
+    </li>
+
+    <li>
+      <a href="https://www.gob.mx/cenapred" target="_blank" rel="noopener noreferrer">
+        <img src="{{ url_for('static', filename='img/logo-cenapred.svg') }}" alt="CENAPRED">
+        <span>CENAPRED</span>
+      </a>
+    </li>
+
+    <li>
+      <a href="https://openaq.org/" target="_blank" rel="noopener noreferrer">
+        <img src="{{ url_for('static', filename='img/logo-openaq.svg') }}" alt="OpenAQ">
+        <span>OpenAQ</span>
+      </a>
+    </li>
   </ul>
 </section>

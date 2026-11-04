@@ -1,2 +1,19 @@
 /* Reserved for dashboard/alerts specific tweaks. Most styling lives in components.css; keep this file small. */
 .dashboard-section { margin-top: 1.5rem; }
+/* Color de los enlaces del menú */
+.nav a {
+    color: #154723;
+    text-decoration: none;
+}
+
+/* Color cuando pasas el cursor */
+.nav a:hover {
+    color: #256938;
+}
+
+.nav a.active {
+    color: #7cc271;
+    font-weight: bold;
+    border-bottom: 3px solid #7cc271;
+    padding-bottom: 5px;
+}

@@ -10,11 +10,11 @@
       "reason": "Skill positive today and 90 days ago."
     },
     {
-      "municipio": "Aguascalientes",
-      "variable": "t2m_min",
+      "municipio": "Asientos",
+      "variable": "rain_occurrence",
       "status": "OK",
-      "skill_90d": 0.19,
-      "skill_90d_previous": 0.17,
+      "skill_90d": 0.14,
+      "skill_90d_previous": 0.12,
       "reason": "Skill positive today and 90 days ago."
     },
     {
@@ -26,12 +26,68 @@
       "reason": "Skill negative today, positive 90 days ago."
     },
     {
-      "municipio": "Calvillo",
-      "variable": "t2m_min",
+      "municipio": "Cosío",
+      "variable": "rain_occurrence",
+      "status": "OK",
+      "skill_90d": 0.12,
+      "skill_90d_previous": 0.09,
+      "reason": "Skill positive today and 90 days ago."
+    },
+    {
+      "municipio": "El Llano",
+      "variable": "rain_occurrence",
+      "status": "ALERTA",
+      "skill_90d": -0.02,
+      "skill_90d_previous": 0.08,
+      "reason": "Skill negative today, positive 90 days ago."
+    },
+    {
+      "municipio": "Jesús María",
+      "variable": "rain_occurrence",
+      "status": "OK",
+      "skill_90d": 0.18,
+      "skill_90d_previous": 0.16,
+      "reason": "Skill positive today and 90 days ago."
+    },
+    {
+      "municipio": "Pabellón de Arteaga",
+      "variable": "rain_occurrence",
+      "status": "OK",
+      "skill_90d": 0.11,
+      "skill_90d_previous": 0.10,
+      "reason": "Skill positive today and 90 days ago."
+    },
+    {
+      "municipio": "Rincón de Romos",
+      "variable": "rain_occurrence",
+      "status": "OK",
+      "skill_90d": 0.16,
+      "skill_90d_previous": 0.14,
+      "reason": "Skill positive today and 90 days ago."
+    },
+    {
+      "municipio": "San Francisco de los Romo",
+      "variable": "rain_occurrence",
+      "status": "OK",
+      "skill_90d": 0.13,
+      "skill_90d_previous": 0.12,
+      "reason": "Skill positive today and 90 days ago."
+    },
+    {
+      "municipio": "San José de Gracia",
+      "variable": "rain_occurrence",
       "status": "RETIRAR",
-      "skill_90d": -0.06,
-      "skill_90d_previous": -0.04,
+      "skill_90d": -0.07,
+      "skill_90d_previous": -0.05,
       "reason": "Skill negative today and 90 days ago. Retire."
+    },
+    {
+      "municipio": "Tepezalá",
+      "variable": "rain_occurrence",
+      "status": "OK",
+      "skill_90d": 0.10,
+      "skill_90d_previous": 0.08,
+      "reason": "Skill positive today and 90 days ago."
     }
   ],
   "nan_pct": {

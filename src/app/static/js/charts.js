@@ -7,23 +7,35 @@ window.ChequiCharts = (function () {
     return el ? el.getContext("2d") : null;
   }
 
-  function pcaScatter(id, data) {
+    function pcaScatter(id, data) {
     const ctx = _ctx(id);
     if (!ctx) return;
+
+    const pts = (data.points || []).map(p => ({
+      x: p.pc1 ?? p.x,
+      y: p.pc2 ?? p.y,
+      label: p.label ?? ""
+    }));
+    const ev = data.explained_variance || [];
+    const pct = (v) => (v == null ? "" : ` (${(v * 100).toFixed(1)}%)`);
+    const xLabel = data.xLabel || `PC1${pct(ev[0])}`;
+    const yLabel = data.yLabel || `PC2${pct(ev[1])}`;
+
     new Chart(ctx, {
       type: "scatter",
       data: {
         datasets: [{
-          label: "Municipalities",
-          data: data.points.map(p => ({ x: p.x, y: p.y, label: p.label })),
-          backgroundColor: PRIMARY,
-          pointRadius: 6
+          label: "Días (muestra)",
+          data: pts,
+          backgroundColor: "rgba(42, 109, 244, 0.35)",
+          pointRadius: pts.length > 100 ? 2.5 : 6
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
+          legend: { display: false },
           tooltip: {
             callbacks: {
               label: (c) => `${c.raw.label} (${c.parsed.x.toFixed(2)}, ${c.parsed.y.toFixed(2)})`
@@ -31,8 +43,8 @@ window.ChequiCharts = (function () {
           }
         },
         scales: {
-          x: { title: { display: true, text: data.xLabel } },
-          y: { title: { display: true, text: data.yLabel } }
+          x: { title: { display: true, text: xLabel } },
+          y: { title: { display: true, text: yLabel } }
         }
       }
     });

@@ -1,46 +1,488 @@
-{# src/templates/model/pca.html #}
 {% extends "base.html" %}
 {% block title %}PCA. ChequiProyecto{% endblock %}
-
 {% block content %}
+
+{# Macro para las tablas con el mismo estilo del sitio #}
+{% macro tabla(cols, head, rows) %}
+<div class="tabla-recuadro" style="background-color: #f4f1ea; border: 1px solid rgb(23, 93, 62); border-radius: 8px; padding: 1.5rem; margin: 1.5rem 0; overflow-x: auto;">
+  <div style="display: grid; grid-template-columns: {{ cols }}; gap: 1.5rem; font-weight: bold; border-bottom: 2px solid rgb(23, 93, 62); padding-bottom: 0.75rem; margin-bottom: 0.5rem;">
+    {% for h in head %}<div>{{ h }}</div>{% endfor %}
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 1rem;">
+    {% for row in rows %}
+    <div style="display: grid; grid-template-columns: {{ cols }}; gap: 1.5rem; align-items: center;">
+      {% for c in row %}<div>{{ c|safe }}</div>{% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endmacro %}
+
+{# Macro para mostrar la misma figura de los dos perfiles (base8 y sin_aod).
+   Las imágenes salen de output/data_analysis/<perfil>/figures/ vía la ruta data_figures.
+   `cols` = columnas del grid: dos lado a lado por defecto, "1fr" para una sola columna (figuras anchas). #}
+{% macro figura(filename, alt, caption, cols="repeat(auto-fit, minmax(320px, 1fr))") %}
+<figure style="margin: 1.5rem 0;">
+  <div style="display: grid; grid-template-columns: {{ cols }}; gap: 1.25rem; align-items: start;">
+    {% for perfil in ["base8", "sin_aod"] %}
+    <div style="text-align: center;">
+      <div style="font-weight: bold; margin-bottom: 0.4rem;"><code>{{ perfil }}</code></div>
+      <img
+        src="{{ url_for('data_figures',
+                        perfil=perfil,
+                        filename=filename) }}"
+        alt="{{ alt }} ({{ perfil }})"
+        style="max-width:100%;height:auto;"
+      >
+    </div>
+    {% endfor %}
+  </div>
+  <figcaption>{{ caption }}</figcaption>
+</figure>
+{% endmacro %}
+
 <section class="page-head">
-  <h1>{{ block.title }}</h1>
-  <p class="muted">{{ block.summary }}</p>
+  <h1>Análisis de Componentes Principales (PCA)</h1>
+  <p class="muted">
+    Descubrimiento de estructura multivariada oculta en las variables climáticas
+    diarias de los 11 municipios, tras remover el ciclo anual, y decisión sobre
+    cuántos componentes conservar.
+  </p>
 </section>
 
 <section>
-  <h2>How the tool works</h2>
-  <p>{{ block.how_it_is_used }}</p>
+  <h2>¿Qué es el PCA?</h2>
+  <p>
+    El <strong>Análisis de Componentes Principales (PCA)</strong> es una técnica
+    de reducción de dimensionalidad <em>no supervisada</em>. Toma un conjunto de
+    variables correlacionadas (temperatura, humedad, viento, radiación,
+    aerosol, lluvia…) y las transforma en un nuevo conjunto de variables
+    ortogonales llamadas <strong>componentes principales</strong>, ordenadas por
+    la cantidad de varianza que explican.
+  </p>
   <ul>
-    {% for k in block.key_takeaways %}<li>{{ k }}</li>{% endfor %}
+    <li>
+      <strong>PC1</strong> es la dirección de máxima varianza de los datos.
+    </li>
+    <li>
+      <strong>PC2</strong> es la siguiente dirección ortogonal con más varianza,
+      y así sucesivamente.
+    </li>
+    <li>
+      Las <strong>cargas (loadings)</strong> indican cuánto contribuye cada
+      variable original a cada componente y permiten interpretarla
+      físicamente.
+    </li>
+    <li>
+      Los <strong>scores</strong> son las coordenadas de cada observación
+      (día / municipio) en el nuevo espacio de componentes.
+    </li>
+  </ul>
+  <p style="text-align: center;">
+    En este proyecto el PCA responde dos preguntas: <em>¿cuántas dimensiones
+    independientes hay realmente detrás de las variables climáticas, y qué
+    representan?</em> y <em>¿se puede reducir la base sin perder capacidad
+    predictiva?</em>
+  </p>
+</section>
+
+<section>
+  <h2>Perfiles de variables</h2>
+  <p>
+    El PCA se corrió con dos conjuntos de variables, que se eligen con
+    <code>--profile</code> en <code>pattern_discovery.py</code>.
+  </p>
+
+  {{ tabla("1fr 3fr 2fr",
+           ["Perfil", "Variables", "Notas"],
+           [["<strong>base8</strong>",
+             "T2M, T2M_MAX, T2M_MIN, WS2M, RH2M, ALLSKY_SFC_SW_DWN, aod_055_mean, PRECTOTCORR (8)",
+             "Corrida original, con AOD."],
+            ["<strong>sin_aod</strong>",
+             "T2M, T2M_MAX, T2M_MIN, WS2M, RH2M, ALLSKY_SFC_SW_DWN, PRECTOTCORR, PS, precipitation_mm (9)",
+             "Sin AOD; <code>log1p</code> en las dos variables de lluvia."]]) }}
+
+  <h3>Por qué se quita AOD en el perfil final</h3>
+  <ul>
+    <li>Tiene <strong>20.6% de datos faltantes</strong> con huecos estacionales (solo hay
+      lectura en días despejados), y al imputarlos a la climatología su carga se encoge.</li>
+    <li>La disponibilidad de AOD explica <strong>22.5% de la varianza de PC1</strong>: los
+      huecos no son aleatorios, siguen el régimen del tiempo.</li>
+    <li>No aportó de forma consistente en el primer test de XGBoost (<code>usar_aod=False</code>)
+      y no mostró señal frente a PM2.5 (ρ = −0.12).</li>
+    <li>Si entrara al PCA, su información llegaría al modelo a través de los componentes y
+      contradiría esa decisión.</li>
+    <li>El modelo sin AOD rinde igual o mejor en la prueba de componentes (ver abajo).</li>
   </ul>
 </section>
 
 <section>
-  <h2>Example — municipalities in PC space</h2>
-  <div class="chart-canvas-wrap" style="height:320px;">
+  <h2>Cómo se utilizó en este proyecto</h2>
+  <p>
+    Las tablas de los pasos 1 a 8 corresponden a la corrida base8 (referencia). Las
+    figuras se muestran para los dos perfiles, tal como las generó
+    <code>pattern_discovery.py</code> en <code>output/data_analysis/&lt;perfil&gt;/figures/</code>
+    (<code>base8</code> y <code>sin_aod</code>). Los resultados completos de sin_aod
+    están en output/data_analysis/sin_aod/.
+  </p>
+
+  <h3>Paso 1. Selección de variables</h3>
+  <p>
+    Se seleccionaron variables con una relación deseasonalizada moderada o fuerte
+    y evidencia estadística de nivel <em>High</em>. La siguiente tabla presenta
+    las variables de la corrida base8 y el fenómeno que representa cada una.
+  </p>
+
+  {{ tabla("60px 220px 1fr",
+           ["", "Variable", "Característica"],
+           [["<span style='font-size:1.3em;'>🌡️</span>", "<strong>T2M</strong>", "Temperatura del aire a 2 metros de altura."],
+            ["<span style='font-size:1.3em;'>🔥</span>", "<strong>T2M_MAX</strong>", "Temperatura máxima diaria del aire a 2 metros."],
+            ["<span style='font-size:1.3em;'>❄️</span>", "<strong>T2M_MIN</strong>", "Temperatura mínima diaria del aire a 2 metros."],
+            ["<span style='font-size:1.3em;'>💨</span>", "<strong>WS2M</strong>", "Velocidad del viento a 2 metros de altura."],
+            ["<span style='font-size:1.3em;'>💧</span>", "<strong>RH2M</strong>", "Humedad relativa del aire a 2 metros."],
+            ["<span style='font-size:1.3em;'>☀️</span>", "<strong>ALLSKY_SFC_SW_DWN</strong>", "Irradiancia solar de onda corta que llega a la superficie bajo todas las condiciones del cielo."],
+            ["<span style='font-size:1.3em;'>🌫️</span>", "<strong>aod_055_mean</strong>", "Media de la profundidad óptica de aerosoles a 550 nm, indicador de la presencia de partículas en la atmósfera. <em>Solo en base8.</em>"],
+            ["<span style='font-size:1.3em;'>🌧️</span>", "<strong>PRECTOTCORR</strong>", "Precipitación total corregida, expresada generalmente en mm/día."],
+            ["<span style='font-size:1.3em;'>⏲️</span>", "<strong>PS</strong>", "Presión superficial. <em>Solo en sin_aod.</em>"],
+            ["<span style='font-size:1.3em;'>🌦️</span>", "<strong>precipitation_mm</strong>", "Precipitación diaria CHIRPS (promedio zonal sobre el polígono municipal). <em>Solo en sin_aod.</em>"]]) }}
+
+  <p>
+    Se excluyeron variables derivadas (t2m_rango y vpd_kpa, que dominarían por
+    construcción), variables de bajo impacto o con exceso de ceros (rain_30d,
+    dias_sin_lluvia), columnas constantes de calidad de AOD, variables estáticas
+    (solo 11 valores) y las variables objetivo (targets).
+  </p>
+
+  <h3>Paso 2. Preparación multivariada</h3>
+  <ul>
+    <li>Se usan las <strong>26,444 filas</strong> completas (sin descartar filas).</li>
+    <li>
+      En el perfil <code>sin_aod</code>, las dos variables de lluvia pasan primero por
+      <code>log1p</code>, para que los días de lluvia extrema no dominen el PCA.
+    </li>
+    <li>
+      Cada variable se convierte a <strong>anomalía deseasonalizada</strong>
+      (climatología día-del-año por municipio, suavizada a 15 días).
+    </li>
+    <li>Después se aplica <strong>z-score</strong> para poner en la misma escala °C, %, m/s y mm (PCA sobre la matriz de correlación).</li>
+    <li>
+      En <code>base8</code>, aod_055_mean tiene 5,452 NaN (20.6%) por retrievals de cielo
+      despejado; se imputan a 0 (=climatología) para no sesgar la muestra, y el
+      Paso 4 verifica el efecto con un PCA sin AOD.
+    </li>
+  </ul>
+
+  <h3>Paso 3. Ejecución del PCA</h3>
+  <p>
+    En base8 se obtienen 8 componentes (uno por variable). 4 acumulan 80% de varianza
+    y 2 tienen <em>eigenvalue</em> &gt; 1 (Kaiser). PC1–PC3 retienen 76.1%.
+    En sin_aod también bastan 4 componentes para llegar a 80%.
+  </p>
+
+  {{ tabla("1fr 1fr 1fr",
+           ["Componente", "Varianza explicada (%)", "Acumulada (%)"],
+           [["PC1", "38.10", "38.10"],
+            ["PC2", "25.80", "63.90"],
+            ["PC3", "12.20", "76.10"],
+            ["PC4", "8.80", "84.80"],
+            ["PC5", "6.90", "91.80"],
+            ["PC6", "5.00", "96.70"],
+            ["PC7", "2.90", "99.60"],
+            ["PC8", "0.40", "100.0"]]) }}
+
+  {{ figura('fig_step5_explained_variance.png',
+            'Varianza explicada por componente y acumulada',
+            'Varianza explicada por componente (barras) y acumulada (línea) en cada perfil. La línea punteada marca el objetivo de 80%, que en ambos perfiles se alcanza con 4 componentes (Paso 5).') }}
+
+  <h3>Paso 4. Interpretación de componentes</h3>
+  <p>
+    Las cargas son la correlación entre cada variable original y el componente.
+    Solo importa el <strong>contraste</strong> entre variables (el signo global
+    es arbitrario). Se interpretan las cargas dominantes con
+    |loading| ≥ 0.4.
+  </p>
+
+  {{ tabla("60px 1fr 1fr 1fr 1fr",
+           ["","Variable", "PC1", "PC2", "PC3"],
+           [["<span style='font-size:1.3em;'>🌡️</span>","T2M", "0.70", "0.68", "0.12"],
+            ["<span style='font-size:1.3em;'>🌡️</span>","T2M_MAX", "0.93", "0.19", "0.05"],
+            ["<span style='font-size:1.3em;'>🌡️</span>","T2M_MIN", "0.03", "0.89", "0.26"],
+            ["<span style='font-size:1.3em;'>💨</span>","WS2M", "-0.17", "-0.46", "0.80"],
+            ["<span style='font-size:1.3em;'>💧</span>","RH2M", "-0.80", "0.24", "0.17"],
+            ["<span style='font-size:1.3em;'>☀️</span>","ALLSKY_SFC_SW_DWN", "0.75", "-0.42", "-0.10"],
+            ["<span style='font-size:1.3em;'>🌫️</span>","aod_055_mean", "-0.14", "0.42", "0.19"],
+            ["<span style='font-size:1.3em;'>🌧️</span>","PRECTOTCORR", "-0.62", "0.30", "-0.39"]]) }}
+
+  <ul>
+    <li>
+      <strong>PC1 (38.1%)</strong>: contraste entre máxima diurna,
+      temperatura media y radiación solar (+) frente a humedad y lluvia (−).
+      <em>Eje principal de régimen térmico/hídrico.</em>
+    </li>
+    <li>
+      <strong>PC2 (25.8%)</strong>: contraste entre carga de aerosoles,
+      temperatura media y mínima nocturna (+) frente a radiación solar y
+      viento (−).
+    </li>
+    <li>
+      <strong>PC3 (12.2%)</strong>: movimiento común del viento.
+    </li>
+  </ul>
+
+  {{ figura('fig_step5_loadings.png',
+            'Cargas de las variables por componente',
+            'Cargas de cada variable en los primeros 4 componentes (los necesarios para llegar a 80%) de cada perfil. Las líneas punteadas marcan |carga| = 0.40, el umbral de variable dominante. La tabla de arriba muestra PC1 a PC3 de base8.') }}
+
+  <h4>Sensibilidad al AOD</h4>
+  <p>
+    AOD carga más en PC2 (+0.42). Al repetir el PCA sin AOD, la similitud de
+    cargas (|coseno|) es <strong>1.00</strong> para PC1–PC3: su inclusión no
+    altera la estructura de los componentes principales. Esto significa que el
+    PCA no necesita AOD, no que AOD sea útil: por eso se excluye del perfil final.
+  </p>
+
+  <h3>Paso 5. Analítica visual</h3>
+
+  {{ figura('fig_step5_projections.png',
+            'Proyecciones en pares de componentes',
+            'Proyecciones de los días en todos los pares entre PC1 y PC4 (color: densidad de días en escala logarítmica; puntos rojos: días inusuales según la distancia de Mahalanobis).',
+            '1fr') }}
+
+  {{ figura('fig_step5_pc1_pc2_month.png',
+            'PC1 vs PC2 coloreado por mes',
+            'PC1–PC2 coloreado por mes. Si la deseasonalización funcionó, el color no debe formar un patrón: en base8 el mes explica 0.1% de la varianza de PC1 y 0.0% de PC2, lo que confirma que el ciclo anual quedó eliminado.') }}
+
+  <h3>Paso 6. Patrones ocultos</h3>
+  <p>
+    La estructura es mayoritariamente continua, con asimetría y curtosis
+    notables en PC1 (skew −0.84, curtosis +2.15) y PC3 (skew +0.38, curtosis
+    +1.73), y autocorrelación lag-1 persistente: PC1 0.65, PC2 0.70, PC3 0.42.
+    Esto sugiere <strong>regímenes meteorológicos persistentes</strong>, no
+    grupos discretos.
+  </p>
+
+  <p>Varianza de cada componente explicada por una agrupación (%):</p>
+
+  {{ tabla("2fr 1fr 1fr 1fr",
+           ["Agrupación", "PC1", "PC2", "PC3"],
+           [["Municipio", "0", "0", "0"],
+            ["Mes", "0.10", "0", "0"],
+            ["Año", "2.80", "3.50", "1.00"],
+            ["AOD observado", "22.50", "2.00", "0.40"]]) }}
+
+  <p>
+    Municipio y mes no separan los datos (los 11 municipios comparten pocas celdas
+    NASA, así que sus series son casi intercambiables). El único efecto relevante
+    es la disponibilidad de AOD sobre PC1 (22.5%), que respalda tratar sus huecos
+    como parte del régimen del tiempo y no como ruido aleatorio.
+  </p>
+
+  <h3>Paso 8. Veredicto del análisis exploratorio</h3>
+  <p>
+    Comprobaciones superadas. <strong>READY FOR SEGMENTATION</strong>.
+    4 componentes retienen 80% de las 8 variables; las cargas de PC1–PC3 se
+    mantienen estables sin AOD (|cosine| mínimo 1.00 ≥ 0.9); los scores muestran
+    asimetría o persistencia (|skew| máx 0.84, autocorrelación lag-1 máx 0.70).
+    Este veredicto dice que los datos tienen estructura aprovechable para
+    segmentar regímenes. No dice que reducir la base con PCA sea buena idea para
+    el modelo: eso se prueba en la siguiente sección.
+  </p>
+</section>
+
+<section>
+  <h2>Prueba del número de componentes (<code>test_pca.py</code>)</h2>
+  <p>
+    Retener 80% de la varianza de X no garantiza conservar la información útil
+    para predecir. Para verificarlo, test_pca.py hace un
+    <em>walk-forward</em> por año (test 2023–2026). En cada fold, solo con los años
+    anteriores se ajustan la climatología, el z-score y el PCA. Luego se entrena el
+    mismo XGBoost con los primeros <em>k</em> componentes (k = 1…p) y con las variables
+    originales sin PCA (orig), y se mide:
+  </p>
+  <ul>
+    <li><strong>Skill de T2M_MIN a h=1:</strong> 1 − MSE(modelo) / MSE(climatología), con target = anomalía de T2M_MIN en t+1.</li>
+    <li><strong>BSS de ocurrencia de lluvia a h=1</strong> (≥ 1 mm) contra la frecuencia climatológica por municipio y mes.</li>
+  </ul>
+  <p>
+    <strong>Criterio:</strong> se acepta el menor <em>k</em> cuyo skill medio queda a menos de
+    0.02 de orig y sin ningún fold más de 0.05 peor. Los resultados son
+    comparables entre sí, no con los skills de la Fase 2: este test usa un solo XGBoost
+    con hiperparámetros fijos, solo las variables base (sin lags) y otro baseline.
+  </p>
+  <p>
+    <strong>k80 = 4</strong> en los 4 folds de ambos perfiles, así que el corte por varianza
+    es estable. Aun así, no cumple el criterio de habilidad predictiva.
+  </p>
+
+  <h3>Resultados: base8</h3>
+  {{ tabla("0.8fr 1fr 1fr 1fr 1fr 1fr",
+           ["k", "Skill T2M_MIN (media)", "Skill (mín)", "BSS lluvia (media)", "BSS (mín)", "¿Cumple?"],
+           [["orig", "0.562", "0.513", "0.124", "0.083", "ref"],
+            ["1", "0.022", "-0.031", "-0.039", "-0.149", "No"],
+            ["2", "0.533", "0.460", "-0.015", "-0.100", "No"],
+            ["3", "0.524", "0.469", "0.044", "-0.003", "No"],
+            ["<strong>4 (k80)</strong>", "0.523", "0.465", "0.044", "0.000", "No"],
+            ["5", "0.545", "0.495", "0.068", "0.020", "No"],
+            ["6", "0.537", "0.484", "0.074", "0.016", "No"],
+            ["7", "0.542", "0.484", "0.063", "0.014", "No"],
+            ["8", "0.588", "0.539", "0.086", "0.023", "No"]]) }}
+  <p>Ningún k cumple: el BSS de lluvia nunca recupera el nivel de las variables originales (0.124).</p>
+
+  <h3>Resultados: sin_aod</h3>
+  {{ tabla("0.8fr 1fr 1fr 1fr 1fr 1fr",
+           ["k", "Skill T2M_MIN (media)", "Skill (mín)", "BSS lluvia (media)", "BSS (mín)", "¿Cumple?"],
+           [["orig", "0.568", "0.526", "0.148", "0.091", "ref"],
+            ["1", "-0.009", "-0.068", "-0.018", "-0.103", "No"],
+            ["2", "0.519", "0.449", "-0.014", "-0.074", "No"],
+            ["3", "0.514", "0.453", "0.000", "-0.017", "No"],
+            ["<strong>4 (k80)</strong>", "0.507", "0.448", "0.045", "0.017", "No"],
+            ["5", "0.529", "0.464", "0.131", "0.074", "No"],
+            ["6", "0.536", "0.470", "0.123", "0.073", "No"],
+            ["7", "0.540", "0.486", "0.143", "0.107", "No"],
+            ["8", "0.548", "0.497", "0.143", "0.089", "No"],
+            ["9", "0.578", "0.525", "0.140", "0.075", "<strong>Sí</strong>"]]) }}
+  <p>
+    El único k que cumple es 9, que equivale a rotar las 9 variables sin reducir
+    dimensionalidad.
+  </p>
+</section>
+
+<section>
+  <h2>Decisión</h2>
+  <ol>
+    <li>
+      <strong>No se recorta la base con PCA.</strong> Retener 80% de la varianza (k = 4)
+      pierde habilidad: en <code>sin_aod</code>, el BSS de lluvia cae de 0.148 a 0.045 y el
+      skill de T2M_MIN de 0.568 a 0.507. La información útil para predecir lluvia está en
+      componentes de baja varianza, justo los que el corte del 80% descarta.
+    </li>
+    <li>
+      <strong>Perfil final: <code>sin_aod</code> con las variables originales.</strong>
+      Sin AOD el modelo supera ligeramente a <code>base8</code> en ambas métricas
+      (skill 0.568 vs 0.562; BSS 0.148 vs 0.124), lo que respalda excluirlo.
+    </li>
+    <li>
+      <strong>El PCA queda como herramienta exploratoria:</strong> interpretación de
+      dimensiones, detección de días inusuales y base para segmentación en regímenes
+      meteorológicos.
+    </li>
+  </ol>
+
+  <h3>Límites conocidos</h3>
+  <ul>
+    <li>Solo 4 folds: las diferencias de ~0.02 no son concluyentes.</li>
+    <li>
+      La prueba usa solo las variables base. No incluye los lags ni los acumulados del
+      master (53 features), que son los que más aportan a T2M_MIN. Antes de decidir sobre
+      el set completo hay que repetirla con él.
+    </li>
+    <li>
+      Los 11 municipios comparten pocas celdas de NASA POWER (2 a 3 series distintas), por
+      lo que la muestra efectiva es mucho menor que las 26,444 filas.
+    </li>
+    <li>El PCA captura solo estructura lineal, y la lluvia sigue siendo zero-inflated incluso tras <code>log1p</code>.</li>
+    <li>
+      El PCA exploratorio (pasos 1 a 8) se ajusta con toda la muestra y la climatología se
+      estima con todo el periodo. Es válido para explorar, no para fijar un <em>k</em> de
+      producción; para eso sirve la prueba walk-forward.
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>Cómo reproducirlo</h2>
+  <pre><code># PCA exploratorio (reporte de pasos 1 a 8)
+python pattern_discovery.py --profile base8
+python pattern_discovery.py --profile sin_aod
+python pattern_discovery.py --profile ambos
+
+# Prueba del número de componentes (walk-forward)
+python test_pca.py --profile ambos</code></pre>
+</section>
+
+
+<section>
+  <h2>Proyección real PC1–PC2</h2>
+  <p class="muted">
+    Datos generados por el pipeline a partir de los scores del PCA.
+  </p>
+  <div class="chart-canvas-wrap" style="height:360px;">
     <canvas id="pca-scatter"></canvas>
   </div>
+</section>
+
+<section>
+  <h2>Resumen y decisión</h2>
+  <div class="tabla-recuadro" style="background-color: #f4f1ea; border: 1px solid rgb(23, 93, 62); border-radius: 8px; padding: 1.5rem; margin: 1.5rem 0;">
+    <ul>
+      <li>
+        <strong>Decisión:</strong> <strong>no se recorta la base con PCA</strong>. El modelo
+        usa las variables originales del perfil sin_aod.
+      </li>
+      <li>
+        <strong>Por qué:</strong> retener 80% de la varianza (4 componentes) hace perder
+        habilidad predictiva. En sin_aod, el BSS de lluvia a h=1 cae de 0.148
+        a 0.045 y el skill de T2M_MIN de 0.568 a 0.507.
+      </li>
+      <li>
+        <strong>Uso del PCA:</strong> exploratorio (interpretar dimensiones, detectar días
+        inusuales, base para segmentar regímenes), no como paso de reducción previo al modelo.
+      </li>
+      <li>
+        <strong>AOD:</strong> se excluye del perfil final (20.6% de datos faltantes con huecos
+        estacionales y sin ganancia predictiva).
+      </li>
+    </ul>
+  </div>
+</section>
+
+
+<section>
+  <h2>Artefactos generados</h2>
+  <ul>
+    <li>
+      Reporte por perfil:
+      <code>src/data_analysis/output/data_analysis/&lt;perfil&gt;/data_analysis_report.md</code>
+      (<code>&lt;perfil&gt;</code> = <code>base8</code> o <code>sin_aod</code>).
+    </li>
+    <li>
+      Figuras:
+      <code>src/data_analysis/output/data_analysis/&lt;perfil&gt;/figures/</code>
+      (<code>fig_step5_explained_variance.png</code>, <code>fig_step5_loadings.png</code>,
+      <code>fig_step5_projections.png</code>, <code>fig_step5_pc1_pc2_month.png</code>).
+    </li>
+    <li>
+      Tablas:
+      <code>src/data_analysis/output/data_analysis/&lt;perfil&gt;/tables/</code>
+      (resumen de varianza, cargas, interpretación, estructura por agrupación y
+      <code>pca_scores.parquet</code>).
+    </li>
+    <li>
+      Prueba de componentes:
+      <code>tables/k_test_folds.csv</code> y <code>tables/k_test_summary.csv</code>
+      dentro de cada perfil.
+    </li>
+  </ul>
 </section>
 {% endblock %}
 
 {% block scripts %}
 <script>
-  // PLACEHOLDER: real PCA scatter comes from the pipeline.
-  // TODO(modelo): replace with data from /api/metrics -> pca_scatter.
-  const PCA_MOCK = {
-    xLabel: "PC1 (38%)",
-    yLabel: "PC2 (21%)",
-    points: [
-      {x: -1.2, y: 0.4, label: "Aguascalientes"},
-      {x: -0.9, y: 0.1, label: "Asientos"},
-      {x: 0.7, y: -0.3, label: "Calvillo"},
-      {x: 1.1, y: 0.8, label: "Jesús María"},
-      {x: 0.2, y: -0.9, label: "Pabellón de Arteaga"}
-    ]
-  };
-  document.addEventListener("DOMContentLoaded", () => {
-    ChequiCharts.pcaScatter("pca-scatter", PCA_MOCK);
+  document.addEventListener("DOMContentLoaded", async () => {
+    try {
+      const res = await fetch("/api/metrics");
+      const payload = await res.json();
+      const data = payload.pca_scatter;
+      if (!data || !data.points) throw new Error("pca_scatter missing");
+      ChequiCharts.pcaScatter("pca-scatter", data);
+    } catch (err) {
+      console.warn("PCA scatter unavailable, using empty fallback:", err);
+      ChequiCharts.pcaScatter("pca-scatter", {
+        xLabel: "PC1 (38.1%)",
+        yLabel: "PC2 (25.8%)",
+        points: []
+      });
+    }
   });
 </script>
 {% endblock %}

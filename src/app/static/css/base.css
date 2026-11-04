@@ -24,8 +24,33 @@ body {
 a { color: var(--color-primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
 h1, h2, h3 { margin: 0 0 .5rem; line-height: 1.25; }
-h1 { font-size: 1.6rem; }
-h2 { font-size: 1.25rem; margin-top: 1.5rem; }
+h1 { 
+  font-size: 1.6rem; 
+  color: #27571f;
+}
+h2 { 
+  font-size: 1.25rem; 
+  margin-top: 1.5rem; 
+  color: #27571f;
+}
 h3 { font-size: 1.05rem; }
 p  { margin: 0 0 .75rem; }
 .muted { color: var(--color-muted); }
+
+.nav a {
+    color: #154723;
+    text-decoration: none;
+}
+
+/* Color cuando pasas el cursor */
+.nav a:hover {
+    color: #256938;
+    text-decoration: underline;
+}
+
+.nav a.active {
+    color: #7cc271;
+    font-weight: bold;
+    border-bottom: 3px solid #7cc271;
+    padding-bottom: 5px;
+}

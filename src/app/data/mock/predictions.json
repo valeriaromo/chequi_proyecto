@@ -33,6 +33,94 @@
       "skill_rain": 0.20,
       "status": "ALERTA",
       "note": "PLACEHOLDER"
+    },
+    "Cosío": {
+      "municipio": "Cosío",
+      "date": "29/10/2026",
+      "t2m_min_pred": 6.5,
+      "t2m_min_baseline": 7.2,
+      "p_rain": 0.38,
+      "skill_t2m_min": 0.16,
+      "skill_rain": 0.21,
+      "status": "OK",
+      "note": "PLACEHOLDER"
+    },
+    "Jesús María": {
+      "municipio": "Jesús María",
+      "date": "29/10/2026",
+      "t2m_min_pred": 8.1,
+      "t2m_min_baseline": 8.8,
+      "p_rain": 0.58,
+      "skill_t2m_min": 0.18,
+      "skill_rain": 0.23,
+      "status": "ALERTA",
+      "note": "PLACEHOLDER"
+    },
+    "Pabellón de Arteaga": {
+      "municipio": "Pabellón de Arteaga",
+      "date": "29/10/2026",
+      "t2m_min_pred": 7.2,
+      "t2m_min_baseline": 7.9,
+      "p_rain": 0.44,
+      "skill_t2m_min": 0.16,
+      "skill_rain": 0.19,
+      "status": "OK",
+      "note": "PLACEHOLDER"
+    },
+    "Rincón de Romos": {
+      "municipio": "Rincón de Romos",
+      "date": "29/10/2026",
+      "t2m_min_pred": 6.9,
+      "t2m_min_baseline": 7.6,
+      "p_rain": 0.41,
+      "skill_t2m_min": 0.17,
+      "skill_rain": 0.20,
+      "status": "OK",
+      "note": "PLACEHOLDER"
+    },
+    "San José de Gracia": {
+      "municipio": "San José de Gracia",
+      "date": "29/10/2026",
+      "t2m_min_pred": 5.8,
+      "t2m_min_baseline": 6.5,
+      "p_rain": 0.35,
+      "skill_t2m_min": 0.14,
+      "skill_rain": 0.18,
+      "status": "ALERTA",
+      "note": "PLACEHOLDER"
+    },
+    "Tepezalá": {
+      "municipio": "Tepezalá",
+      "date": "29/10/2026",
+      "t2m_min_pred": 6.6,
+      "t2m_min_baseline": 7.3,
+      "p_rain": 0.46,
+      "skill_t2m_min": 0.16,
+      "skill_rain": 0.21,
+      "status": "OK",
+      "note": "PLACEHOLDER"
+    },
+    "El Llano": {
+      "municipio": "El Llano",
+      "date": "29/10/2026",
+      "t2m_min_pred": 7.0,
+      "t2m_min_baseline": 7.7,
+      "p_rain": 0.40,
+      "skill_t2m_min": 0.15,
+      "skill_rain": 0.19,
+      "status": "OK",
+      "note": "PLACEHOLDER"
+    },
+    "San Francisco de los Romo": {
+      "municipio": "San Francisco de los Romo",
+      "date": "29/10/2026",
+      "t2m_min_pred": 7.7,
+      "t2m_min_baseline": 8.4,
+      "p_rain": 0.51,
+      "skill_t2m_min": 0.18,
+      "skill_rain": 0.22,
+      "status": "OK",
+      "note": "PLACEHOLDER"
     }
   }
 }

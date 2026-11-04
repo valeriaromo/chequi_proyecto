@@ -3,6 +3,7 @@
      {% from "partials/grafico.html" import grafico %}
      {{ grafico(id="skill-chart", title="Skill per horizon") }}
    The JS side looks for canvas[data-chart-id] and calls the right helper.
+   IDE might recognize jinja syntax as an error
 #}
 {% macro grafico(id, title, height=280) %}
 <figure class="chart-card">

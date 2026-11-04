@@ -47,9 +47,105 @@
 .chart-canvas-wrap canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
 
 /* Sources */
-.fuentes-grid { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem; }
-.fuentes-grid li { display: flex; align-items: center; gap: .5rem; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: .5rem .75rem; }
-.fuentes-grid img { height: 24px; width: auto; }
+
+.fuentes-grid {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0 2rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.fuentes-grid li {
+    min-width: 0;
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid #dce2ea;
+    border-radius: 14px;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.fuentes-grid li:hover {
+    border-color: #7cc271;
+    transform: translateY(-2px);
+}
+
+.fuentes-grid li a {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.85rem;
+    min-height: 100px;
+    padding: 1rem;
+    box-sizing: border-box;
+    color: #172033;
+    text-decoration: none;
+    text-align: left;
+}
+
+.fuentes-grid li a img {
+    display: block;
+    width: 56px;
+    height: 56px;
+    flex: 0 0 56px;
+    object-fit: contain;
+}
+
+.fuentes-grid li a span {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 1.05rem;
+    line-height: 1.35;
+    font-weight: 500;
+}
+
+.fuentes-grid li a:hover span {
+    color: #28652b;
+}
+
+@media (max-width: 480px) {
+    .fuentes-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+/* Adaptación móvil */
+@media (max-width: 480px) {
+    .fuentes-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .fuentes-grid li a img {
+        width: 56px;
+        height: 56px;
+        flex-basis: 56px;
+    }
+}
+
+/* Código inline */
+code {
+    background-color: #003d12;
+    color: #cce2ce;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Consolas', monospace;
+    font-size: 0.9em;
+}
+
+/* Bloques de código */
+pre code {
+    display: block;
+    background-color: #cce2ce;
+    color: #003d12;
+    padding: 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+}
+
 
 /* Folds */
 .folds { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: .75rem; }

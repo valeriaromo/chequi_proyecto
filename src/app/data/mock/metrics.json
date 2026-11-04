@@ -29,16 +29,6 @@
       ]
     }
   ],
-  "pca_scatter": {
-    "explained_variance": [0.38, 0.21],
-    "points": [
-      {"pc1": -1.2, "pc2": 0.4, "label": "Aguascalientes"},
-      {"pc1": -0.9, "pc2": 0.1, "label": "Asientos"},
-      {"pc1": 0.7, "pc2": -0.3, "label": "Calvillo"},
-      {"pc1": 1.1, "pc2": 0.8, "label": "Jesus Maria"},
-      {"pc1": 0.2, "pc2": -0.9, "label": "Pabellon de Arteaga"}
-    ]
-  },
   "shap_example": {
     "base_value": 9.1,
     "output_value": 8.4,

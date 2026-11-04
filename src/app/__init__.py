@@ -1,5 +1,9 @@
+
 from __future__ import annotations
-from flask import Flask, jsonify
+
+from flask import Flask, jsonify, send_from_directory, abort
+from pathlib import Path
+
 from .routes import api as api_routes
 from .routes import alerts as alerts_routes
 from .routes import dashboard as dashboard_routes
@@ -11,7 +15,23 @@ from .services import metrics as metrics_service
 def create_app() -> Flask:
     app = Flask(__name__)
 
-    # mantener json con caracteres en español
+    # Ruta absoluta a los resultados del análisis
+    BASE_DIR = Path(__file__).resolve().parent
+
+    
+
+    def _find_data_analysis_dir() -> Path:
+        for p in Path(__file__).resolve().parents:
+            for cand in (p / "data_analysis" / "output" / "data_analysis",
+                        p / "src" / "data_analysis" / "output" / "data_analysis"):
+                if cand.is_dir():
+                    return cand
+        raise FileNotFoundError("No se encontró output/data_analysis")
+
+    DATA_ANALYSIS_DIR = _find_data_analysis_dir()
+    print("DATA_ANALYSIS_DIR =", DATA_ANALYSIS_DIR)   # temporal, para verificar
+
+    # Mantener JSON con caracteres en español
     app.json.ensure_ascii = False
     app.json.sort_keys = False
 
@@ -32,5 +52,16 @@ def create_app() -> Flask:
     @app.context_processor
     def _inject_metrics():
         return {"metrics": metrics_service.summary()}
+
+    # Servir figuras de los diferentes perfiles PCA
+    @app.route('/data-figures/<perfil>/<filename>')
+    def data_figures(perfil, filename):
+
+        if perfil not in ("base8", "sin_aod"):
+            abort(404)
+
+        figures_dir = DATA_ANALYSIS_DIR / perfil / "figures"
+
+        return send_from_directory(figures_dir, filename)
 
     return app
