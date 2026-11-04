@@ -19,20 +19,45 @@ FEATURES = {
     "ALLSKY_SFC_SW_DWN": ("All-sky incoming shortwave radiation", NASA, "solar radiation"),
     AOD: ("Aerosol optical depth at 0.55 µm", "MAIAC via Google Earth Engine, zonal mean over the municipal polygon", "aerosol load"),
     "PRECTOTCORR": ("Bias-corrected daily precipitation (mm)", NASA, "rainfall"),
+    "PS": ("Surface pressure (kPa)", NASA, "pressure"),
+    "precipitation_mm": ("CHIRPS daily precipitation (mm)", "CHIRPS zonal mean over the municipal polygon", "rainfall (CHIRPS)"),
 }
-PCA_VARS = list(FEATURES)
-N_PC = 3             # components analizados a detalle
+
+# Perfiles de variables para el PCA.
+#   base8:   las 8 variables originales (incluyendo AOD) basadas en el variable analysis
+#   sin_aod: sin AOD (porque tiene 20% NaN estacional y sin ganancia en XGBoost), con PS y precipitation_mm 
+# para mejor representación de la lluvia y la presión atmosférica para incluir mejor representación de la master_table
+PROFILES = {
+    "base8": ["T2M", "T2M_MAX", "T2M_MIN", "WS2M", "RH2M", "ALLSKY_SFC_SW_DWN", AOD, "PRECTOTCORR"],
+    "sin_aod": ["T2M", "T2M_MAX", "T2M_MIN", "WS2M", "RH2M", "ALLSKY_SFC_SW_DWN",
+                "PRECTOTCORR", "PS", "precipitation_mm"],
+}
+# Variables con log1p ANTES de calcular anomalías (lluvia: zero-inflated)
+LOG1P = {"base8": [], "sin_aod": ["PRECTOTCORR", "precipitation_mm"]}
+
+PCA_VARS = list(PROFILES["base8"])   # se modifica en sitio con set_profile(); todos los módulos lo ven
+
+
+def set_profile(name: str) -> None:
+    PCA_VARS[:] = PROFILES[name]
+
+
+def has_aod() -> bool:
+    return AOD in PCA_VARS
+
+
+N_PC = 3             # componentes analizados a detalle
 VARIANCE_TARGET = 0.80
-LOADING_MIN = 0.40   # de que variable es dominante un componente
-UNUSUAL_P = 0.999    # chic uadrada para 
+LOADING_MIN = 0.40   # a partir de qué |loading| una variable es dominante en un componente
+UNUSUAL_P = 0.999    # percentil de la chi cuadrada para marcar días inusuales
 SEED = 42
 
 
 @dataclass
 class PCAResult:
     eigenvalues: np.ndarray
-    loadings: pd.DataFrame   # variable x PC: correlation entre variable y componente
-    scores: pd.DataFrame     # observation x PC
+    loadings: pd.DataFrame   # variable x PC: correlación entre variable y componente
+    scores: pd.DataFrame     # observación x PC
 
     @property
     def ratio(self) -> np.ndarray:
@@ -44,18 +69,19 @@ class PCAResult:
 
 
 def standardise(X: pd.DataFrame) -> pd.DataFrame:
-    # zscore con la estadística observada y handle de los NaN
+    # z-score con la estadística observada y manejo de NaN (NaN -> 0 = media)
     return ((X - X.mean()) / X.std(ddof=0)).fillna(0.0)
 
 
 def fit_pca(Z: pd.DataFrame) -> PCAResult:
-    # PCA por SVD y datos estandarizados
+    # PCA por SVD sobre datos estandarizados
     values = Z.to_numpy(float)
     _, S, Vt = np.linalg.svd(values, full_matrices=False)
-    Vt = Vt * np.sign(Vt[np.arange(len(Vt)), np.abs(Vt).argmax(axis=1)])[:, None]  # signos de rebroductibilidad
+    Vt = Vt * np.sign(Vt[np.arange(len(Vt)), np.abs(Vt).argmax(axis=1)])[:, None]  # signos reproducibles
     eig = S ** 2 / (len(Z) - 1)
     names = [f"PC{i + 1}" for i in range(len(S))]
-    return PCAResult(eig, pd.DataFrame(Vt.T * np.sqrt(eig), index=Z.columns, columns=names),pd.DataFrame(values @ Vt.T, index=Z.index, columns=names))
+    return PCAResult(eig, pd.DataFrame(Vt.T * np.sqrt(eig), index=Z.columns, columns=names),
+                     pd.DataFrame(values @ Vt.T, index=Z.index, columns=names))
 
 
 def components_needed(res: PCAResult, target: float = VARIANCE_TARGET) -> int:
@@ -63,14 +89,14 @@ def components_needed(res: PCAResult, target: float = VARIANCE_TARGET) -> int:
 
 
 def loading_similarity(full: PCAResult, reduced: PCAResult, n: int = N_PC) -> np.ndarray:
-    # coseno entre los primeros n vectores de los PCA 
+    # coseno entre los primeros n vectores de carga de los dos PCA (sobre las variables comunes)
     a = full.loadings.loc[reduced.loadings.index].iloc[:, :n].to_numpy()
     b = reduced.loadings.iloc[:, :n].to_numpy()
     return np.abs((a * b).sum(0)) / (np.linalg.norm(a, axis=0) * np.linalg.norm(b, axis=0))
 
 
 def interpret(load: pd.Series) -> tuple[str, str]:
-    # variables domintantes y lectura de cada componente
+    # variables dominantes y lectura de cada componente
     dom = load[load.abs() >= LOADING_MIN].sort_values(key=np.abs, ascending=False)
     if dom.empty:
         dom = load.loc[load.abs().nlargest(2).index]
@@ -88,14 +114,16 @@ def eta_squared(score: pd.Series, groups: pd.Series) -> float:
 
 
 def structure_table(scores: pd.DataFrame, meta: pd.DataFrame, n: int = N_PC) -> pd.DataFrame:
-    # porcentaje de cada varianza de los PC explicada por municipalidad, mes, año y si jala el foKin AOD
-    groupings = {"Municipality": meta.municipio, "Month": meta.month, "Year": meta.yr, "AOD observed": meta.aod_obs}
+    # % de la varianza de cada PC explicada por municipio, mes, año y (si existe) disponibilidad de AOD
+    groupings = {"Municipality": meta.municipio, "Month": meta.month, "Year": meta.yr}
+    if "aod_obs" in meta:
+        groupings["AOD observed"] = meta.aod_obs
     return pd.DataFrame({name: {pc: 100 * eta_squared(scores[pc], key) for pc in scores.columns[:n]}
                          for name, key in groupings.items()}).T
 
 
 def lag1_autocorr(scores: pd.DataFrame, municipio: pd.Series, n: int = N_PC) -> pd.Series:
-    # correlacion de las medias por día
+    # autocorrelación lag-1 de los scores por municipio, promediada
     return pd.DataFrame({m: g.iloc[:, :n].apply(lambda s: s.autocorr(1))
                          for m, g in scores.groupby(municipio)}).T.mean()
 
@@ -106,7 +134,7 @@ def shape_stats(scores: pd.DataFrame, n: int = N_PC) -> pd.DataFrame:
 
 
 def unusual_days(res: PCAResult, n: int = N_PC, p: float = UNUSUAL_P) -> tuple[pd.Series, float]:
-    # se usa distancia de Mahalanobis al cuadrado para los primeros PC y chi al cuadrado para los inusuales
+    # distancia de Mahalanobis al cuadrado en los primeros n PC; umbral por chi cuadrada
     d2 = (res.scores.iloc[:, :n] ** 2 / res.eigenvalues[:n]).sum(axis=1)
     return d2, float(stats.chi2.ppf(p, n))
 

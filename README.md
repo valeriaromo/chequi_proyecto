@@ -85,6 +85,65 @@ También vigila el porcentaje de NaN en las columnas base. Para ensayarlo hace f
 **Dirección del proyecto**
 Los análisis indican que el proyecto está **preparado para la identificación de patrones**. La siguiente etapa consiste en explorar relaciones no lineales, seleccionar las variables más informativas y evaluar modelos de aprendizaje automático frente a una línea base de climatología estacional, utilizando una validación que respete el orden temporal de los datos.
 
+
+# Análisis de componentes principales (PCA)
+
+`pattern_discovery.py` (orquestador) y `pca_analysis.py` (funciones) corren un PCA sobre las variables climáticas diarias de los 11 municipios para entender su estructura multivariada y decidir cuántas dimensiones hacen falta para retener al menos el 80% de la varianza. El PCA es exploratorio: no alimenta al modelo de producción y no reemplaza a las features de XGBoost.
+
+## Perfiles de variables
+
+Se elige con la constante `PROFILE` en `pattern_discovery.py` o con `--profile`:
+
+`base8` Variables: T2M, T2M_MAX, T2M_MIN, WS2M, RH2M, ALLSKY_SFC_SW_DWN, aod_055_mean, PRECTOTCORR. Corrida original, con AOD
+`sin_aod` Variables: T2M, T2M_MAX, T2M_MIN, WS2M, RH2M, ALLSKY_SFC_SW_DWN, PRECTOTCORR, PS, precipitation_mm, Sin AOD por los resultados de 20% NaN estacional y sin ganancia en XGBoost; `log1p` en las dos variables de lluvia
+`ambos` Corre los dos perfiles. Cada uno guarda en su propia carpeta 
+
+Se excluyen `t2m_rango` y `vpd_kpa` (derivadas de otras variables, dominarían por construcción), `rain_30d` y `dias_sin_lluvia` (impacto bajo y zero-inflated), las columnas constantes de QA de AOD, las variables estáticas (solo 11 valores) y los targets.
+
+**Por qué se quita AOD en `sin_aod`:** tiene 20.6% de NaN con huecos estacionales (dependen de la nubosidad), no aportó de forma consistente en XGBoost (`usar_aod=False`) y no mostró señal frente a PM2.5 (ρ = -0.12). Si entrara al PCA, su información llegaría al modelo a través de los componentes, contradiciendo esa decisión.
+
+## Preparación de los datos
+
+1. **log1p** en PRECTOTCORR y precipitation_mm (solo perfil `sin_aod`), para que los días de lluvia extrema no dominen.
+2. **Anomalías**: a cada variable se le resta la climatología suavizada (ventana de 15 días, por municipio y día del año). Así el PCA describe estructura día a día y no el ciclo anual.
+3. **Estandarización (z-score)**, porque las unidades difieren (°C, %, m/s, mm). Equivale a un PCA sobre la matriz de correlación.
+4. Los NaN restantes (solo AOD en `base8`) se llevan a 0 después del z-score, es decir, a la climatología.
+
+## Cómo se decide cuántos componentes conservar
+
+Se conservan los primeros `k80` componentes, donde `k80` es el menor número que acumula al menos 80% de la varianza. El reporte también muestra el criterio de Kaiser (autovalor > 1) como referencia y compara contra un PCA sobre valores crudos, donde PC1 captura sobre todo el ciclo anual.
+
+La clasificación final (`READY FOR SEGMENTATION`, `CONDITIONALLY READY` o `ADDITIONAL DATA REQUIRED`) depende de tres pruebas:
+
+- `k80` es como máximo el 60% del número de variables.
+- Los componentes se mantienen estables al quitar AOD (|coseno| ≥ 0.90; solo aplica en `base8`).
+- Los scores muestran asimetría (|skew| ≥ 0.5) o persistencia temporal (autocorrelación lag-1 ≥ 0.3).
+
+## Salidas
+
+Cada corrida escribe en `output/data_analysis/<perfil>/`:
+
+- `data_analysis_report.md`: reporte completo (pasos 1 a 8 y resumen ejecutivo).
+- `figures/`: varianza explicada, cargas (loadings), proyecciones entre componentes y PC1 vs PC2 por mes.
+- `tables/`: resumen del PCA, cargas, interpretación, estructura por municipio/mes/año y `pca_scores.parquet` con los scores de los primeros `k80` componentes.
+
+## Ejecución
+python pattern_discovery.py --profile base8
+python pattern_discovery.py --profile sin_aod
+python pattern_discovery.py --profile ambos
+
+## Resultados
+
+`base8` 8 variables. 84.8% Variance. CONDITIONALLY READY. 
+`sin_aod` 9 variables 81.6% Variance. READY FOR SEGMENTATION
+
+## Límites conocidos
+
+- El PCA y la climatología se ajustan con toda la muestra. Sirve para explorar y orientar el corte, pero **el `k` definitivo debe confirmarse ajustando el PCA solo con los años de entrenamiento de cada fold del walk-forward**; si `k80` cambia mucho entre folds, el corte no es robusto.
+- Los 11 municipios comparten pocas celdas de NASA POWER (2 a 3 series distintas), por lo que la muestra efectiva es mucho menor que las 26,444 filas.
+- El PCA solo captura estructura lineal, y la lluvia es zero-inflated incluso después de `log1p`.
+- Retener 80% de la varianza de X no garantiza conservar la información útil para predecir T2M_MIN o la ocurrencia de lluvia: antes de reemplazar variables por componentes, hay que verificar que el modelo con `k` PCs iguala el skill del modelo con las variables originales (T2M_MIN global a h=1 y probabilidad de lluvia a h=1).
+
 # Pendientes y límites conocidos actualmente
 Falta probar que la construcción de targets no tenga leakage; la prueba actual solo cubre features.
 Tampoco se ha verificado la calibración de las probabilidades de lluvia.
