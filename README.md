@@ -144,6 +144,45 @@ python pattern_discovery.py --profile ambos
 - El PCA solo captura estructura lineal, y la lluvia es zero-inflated incluso después de `log1p`.
 - Retener 80% de la varianza de X no garantiza conservar la información útil para predecir T2M_MIN o la ocurrencia de lluvia: antes de reemplazar variables por componentes, hay que verificar que el modelo con `k` PCs iguala el skill del modelo con las variables originales (T2M_MIN global a h=1 y probabilidad de lluvia a h=1).
 
+## Prueba del número de componentes (`test_pca.py`)
+
+Para verificar si el corte por varianza (80%) es suficiente, `test_pca.py` hace un walk-forward por año (test 2023-2026). En cada fold, con los años anteriores se ajustan la climatología, el z-score y el PCA. Luego se entrena el mismo XGBoost con los primeros k componentes (k = 1…p) y con las variables originales sin PCA (`orig`), y se mide:
+
+- **Skill de T2M_MIN a h=1**: 1 − MSE(modelo) / MSE(climatología), con target = anomalía de T2M_MIN en t+1.
+- **BSS de ocurrencia de lluvia a h=1** (≥ 1 mm) contra la frecuencia climatológica por municipio y mes.
+
+Criterio: se acepta el menor k cuyo skill medio queda a menos de 0.02 de `orig` y sin ningún fold más de 0.05 peor. Los resultados son comparables entre sí, no con los skills de la Fase 2: este test usa un solo XGBoost con hiperparámetros fijos, solo las variables base (sin lags) y otro baseline.
+
+python test_pca.py --profile base8
+python test_pca.py --profile sin_aod
+python test_pca.py --profile ambos
+
+
+### Resultados
+
+`k80 = 4` en los 4 folds de ambos perfiles, así que el corte por varianza es estable.
+
+| Perfil | k | Skill T2M_MIN (media) | BSS lluvia (media) | ¿Cumple? |
+| `base8` | orig (8 vars) | 0.562 | 0.124 | ref |
+| `base8` | 4 | 0.523 | 0.044 | No |
+| `base8` | 8 | 0.588 | 0.086 | No |
+| `sin_aod` | orig (9 vars) | 0.568 | 0.148 | ref |
+| `sin_aod` | 4 | 0.507 | 0.045 | No |
+| `sin_aod` | 5 | 0.529 | 0.131 | No |
+| `sin_aod` | 9 | 0.578 | 0.140 | Sí (sin reducción) |
+
+### Decisión
+
+1. **No se recorta la base con PCA.** Retener 80% de la varianza (k = 4) pierde skill: en `sin_aod`, el BSS de lluvia cae de 0.148 a 0.045 y el skill de T2M_MIN de 0.568 a 0.507. La información útil para predecir lluvia está en componentes de baja varianza, justo los que el corte del 80% descarta.
+2. **Único k que cumple:** k = 9 en `sin_aod`, que equivale a rotar las 9 variables sin reducir dimensionalidad. En `base8` ningún k cumple.
+3. **Se usa el perfil `sin_aod` con las variables originales.** Sin AOD el modelo supera a `base8` en ambas métricas (skill 0.568 vs 0.562; BSS 0.148 vs 0.124), lo que respalda excluir AOD.
+4. **El PCA queda como herramienta exploratoria** (interpretación de dimensiones, detección de días inusuales, base para segmentación en regímenes), no como paso de reducción previo al modelo.
+
+### Límites de la prueba
+
+- Solo 4 folds, por lo que las diferencias de ~0.02 no son concluyentes.
+- No incluye las features con lags ni acumulados del master, que son las que más aportan a T2M_MIN. Antes de decidir sobre el set completo de 53 features, hay que repetir la prueba con él.
+
 # Pendientes y límites conocidos actualmente
 Falta probar que la construcción de targets no tenga leakage; la prueba actual solo cubre features.
 Tampoco se ha verificado la calibración de las probabilidades de lluvia.
