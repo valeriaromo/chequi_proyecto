@@ -182,6 +182,7 @@ article.functionality-card {
     min-width: 0;
     gap: 28px;
     box-sizing: border-box;
+    border: 1px solid #1e6a35;
 }
 
 /* =========================================
@@ -255,6 +256,7 @@ article.functionality-card {
     cursor: pointer;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
+
 
 .functionality-card:hover {
     transform: translateY(-3px);
