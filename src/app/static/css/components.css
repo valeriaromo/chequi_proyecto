@@ -154,3 +154,148 @@ pre code {
 .fold span { color: var(--color-muted); font-size: .85rem; }
 
 .nan-list { padding-left: 1rem; }
+
+
+/* =========================================
+   FUNCTIONALITY - LAYOUT GENERAL
+========================================= */
+
+/* Una sola card por fila */
+section.functionality-cards {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-auto-flow: row !important;
+    gap: 20px;
+    width: 100%;
+}
+
+/* =========================================
+   FUNCTIONALITY - CARD
+========================================= */
+
+article.functionality-card {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: flex-start;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    gap: 28px;
+    box-sizing: border-box;
+}
+
+/* =========================================
+   FUNCTIONALITY - IMAGEN Y BOTÓN
+========================================= */
+
+.functionality-image-container {
+    flex: 0 0 180px;
+    width: 180px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+}
+
+.functionality-image {
+    width: 100%;
+    height: 150px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.functionality-image img {
+    width: 100%;
+    height: 100%;
+    max-height: 150px;
+    object-fit: contain;
+}
+
+/* Botón debajo de la imagen */
+.functionality-image-container .btn {
+    align-self: center;
+    white-space: nowrap;
+    text-align: center;
+    color: #fff;
+    background-color:#1e6a35
+}
+
+/* =========================================
+   FUNCTIONALITY - CONTENIDO
+========================================= */
+
+.functionality-content {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.functionality-content header {
+    width: 100%;
+    margin-bottom: 8px;
+}
+
+.functionality-content h3 {
+    margin-top: 0;
+}
+
+.functionality-content p {
+    width: 100%;
+    margin-top: 0;
+}
+
+.functionality-content ul {
+    width: 100%;
+    padding-left: 20px;
+}
+.functionality-card {
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.functionality-card:hover {
+    transform: translateY(-3px);
+}
+
+.functionality-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+}
+
+/* =========================================
+   FUNCTIONALITY - RESPONSIVE
+========================================= */
+
+@media (max-width: 600px) {
+
+    section.functionality-cards {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    article.functionality-card {
+        flex-direction: column !important;
+        align-items: center;
+        gap: 20px;
+    }
+
+    .functionality-image-container {
+        flex: none;
+        width: 140px;
+    }
+
+    .functionality-image {
+        height: 120px;
+    }
+
+    .functionality-image img {
+        max-height: 120px;
+    }
+
+    .functionality-content {
+        width: 100%;
+        flex: none;
+    }
+}

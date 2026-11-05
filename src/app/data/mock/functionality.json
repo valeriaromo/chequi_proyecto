@@ -1,46 +1,81 @@
 [
   {
     "slug": "pca",
-    "title": "PCA — Principal Component Analysis",
-    "summary": "PCA is a technique that compresses many correlated variables into a few new ones (principal components) that keep most of the information.",
-    "how_it_is_used": "In Chequi we use PCA to explore the climate data and find patterns between municipalities and variables. It is an exploratory step; it helps us understand the data before training predictive models.",
+    "title": "PCA. Análisis de Componentes Principales",
+    "summary": "El PCA es una técnica que comprime muchas variables correlacionadas en pocas variables nuevas (componentes principales) que conservan la mayor parte de la información.",
+    "how_it_is_used": "Lo usamos para explorar los datos climáticos y encontrar patrones. Probamos conservar solo los componentes que suman 80% de la varianza.",
     "key_takeaways": [
-      "Reduces dozens of variables to a handful of components.",
-      "Reveals which municipalities behave similarly.",
-      "Does not predict by itself; it supports analysis."
+      "Resume las variables climáticas en unas pocas dimensiones interpretables.",
+      "Muestra qué municipios y días se comportan de forma parecida.",
+      "Apoya el análisis y la segmentación en regímenes del tiempo.",
+      "Reducir la base con PCA hacía perder habilidad, por eso no se usa para recortar variables."
     ]
   },
   {
     "slug": "xgboost",
-    "title": "XGBoost — Gradient Boosted Trees",
-    "summary": "XGBoost is a machine learning algorithm that combines many small decision trees to make accurate predictions from tabular data.",
-    "how_it_is_used": "We use XGBoost to predict, for the next day, the probability of rain and the minimum temperature, per municipality. Only the models that beat a climate baseline are kept in production.",
+    "title": "XGBoost. Árboles con Gradient Boosting",
+    "summary": "XGBoost es un algoritmo de aprendizaje automático que combina muchos árboles de decisión pequeños para hacer predicciones precisas con datos tabulares.",
+    "how_it_is_used": "Usamos XGBoost para predecir, para el día siguiente y por municipio, la probabilidad de lluvia y la temperatura mínima. Solo se mantienen en producción los modelos que superan a una referencia climatológica.",
     "key_takeaways": [
-      "Handles missing values natively.",
-      "Works well with the tabular climate features we build.",
-      "Only the rain occurrence and minimum temperature (next day) models are active."
+      "Maneja valores faltantes de forma nativa.",
+      "Funciona bien con las variables tabulares que construimos (rezagos, medias móviles, acumulados).",
+      "Solo están activos los modelos de ocurrencia de lluvia y de temperatura mínima a un día."
     ]
   },
   {
     "slug": "walk-forward",
-    "title": "Walk-forward validation",
-    "summary": "Walk-forward validation trains the model only on past data and tests it on future data, moving the window forward year by year.",
-    "how_it_is_used": "We use walk-forward folds from 2023 to 2026 to estimate how well each model will perform on future days. This mirrors real operation, where the model can never see the future.",
+    "title": "Validación walk-forward",
+    "summary": "La validación walk-forward entrena el modelo solo con datos del pasado y lo prueba con datos futuros, avanzando la ventana año por año.",
+    "how_it_is_used": "Usamos folds walk-forward de 2023 a 2026 para estimar qué tan bien funcionará cada modelo en días futuros. Refleja la operación real, donde el modelo nunca puede ver el futuro. También se usa para decidir cuántos componentes del PCA conservar, ajustando todo con los años anteriores de cada fold.",
     "key_takeaways": [
-      "Respects the time order of the data.",
-      "Compares the model against climate baselines.",
-      "Skill > 0 means the model beats the baseline."
+      "Respeta el orden temporal de los datos.",
+      "Compara el modelo contra referencias climatológicas.",
+      "Un skill mayor que 0 significa que el modelo supera a la referencia.",
+      "Evita fugas de información del futuro hacia el entrenamiento."
     ]
   },
   {
     "slug": "shap",
-    "title": "SHAP — Feature Attribution",
-    "summary": "SHAP explains each prediction by attributing how much each input feature pushed the result up or down.",
-    "how_it_is_used": "For each forecast we can show why the model predicted a colder or warmer night, or a higher or lower chance of rain. This makes the tool easier to trust and audit.",
+    "title": "SHAP. Atribución de variables",
+    "summary": "SHAP explica cada predicción atribuyendo cuánto empujó cada variable de entrada el resultado hacia arriba o hacia abajo.",
+    "how_it_is_used": "Para cada pronóstico podemos mostrar por qué el modelo anticipó una noche más fría o más cálida, o una probabilidad de lluvia mayor o menor. Esto facilita confiar en la herramienta y auditarla.",
     "key_takeaways": [
-      "Explains individual predictions.",
-      "Shows which variables matter most.",
-      "Supports auditing and communication with users."
+      "Explica predicciones individuales.",
+      "Muestra qué variables importan más.",
+      "Apoya la auditoría y la comunicación con los usuarios."
+    ]
+  },
+  {
+    "slug": "anomalias-climatologia",
+    "title": "Anomalías y climatología",
+    "summary": "Una anomalía es la diferencia entre el valor de un día y lo que es normal para esa fecha. La climatología es ese valor normal, calculado con años anteriores.",
+    "how_it_is_used": "Para el PCA y para el modelo restamos a cada variable su climatología (promedio por día del año y por municipio, suavizado a 15 días). Así se elimina el ciclo anual y se estudia lo que cambia día a día. La climatología también sirve como referencia para medir si el modelo aporta algo.",
+    "key_takeaways": [
+      "Quita el efecto de las estaciones del año.",
+      "Permite ver patrones de tiempo real, no solo el calendario.",
+      "En la validación se calcula solo con los años de entrenamiento para no usar información futura."
+    ]
+  },
+  {
+    "slug": "skill-bss",
+    "title": "Skill y Brier Skill Score. Métricas de evaluación",
+    "summary": "Estas métricas comparan el modelo contra una referencia climatológica. Un valor mayor que 0 significa que el modelo la supera; 1 sería un pronóstico perfecto.",
+    "how_it_is_used": "Para la temperatura mínima usamos el skill basado en el error cuadrático. Para la lluvia, que es una probabilidad, usamos el Brier Skill Score (BSS). Las dos se calculan por horizonte con la validación walk-forward y deciden qué modelos entran a producción.",
+    "key_takeaways": [
+      "Miden la mejora real sobre un pronóstico basado en el clima normal.",
+      "El BSS se usa para probabilidades, como la de lluvia.",
+      "Un modelo con skill menor o igual a 0 no se despliega."
+    ]
+  },
+  {
+    "slug": "datos-parquet",
+    "title": "Pipeline de datos. Python, pandas y Parquet",
+    "summary": "El procesamiento de datos se hace en Python con pandas, y las tablas intermedias se guardan en formato Parquet, que es compacto y rápido de leer.",
+    "how_it_is_used": "Se integra NASA POWER, CHIRPS y AOD en una tabla maestra (master_table.parquet) con una fila por municipio y día. A partir de ella se construyen las variables, se corre el análisis exploratorio (PCA) y se guardan los scores y las tablas de resultados.",
+    "key_takeaways": [
+      "Una sola tabla maestra alimenta el análisis y los modelos.",
+      "Parquet conserva los tipos de datos y reduce el tamaño de los archivos.",
+      "Los resultados quedan guardados por perfil de análisis para poder reproducirlos."
     ]
   }
 ]
