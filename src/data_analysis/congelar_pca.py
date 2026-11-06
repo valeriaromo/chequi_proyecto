@@ -1,13 +1,3 @@
-"""Paso 8: congela climatologia, escalador y PCA con todos los años disponibles, entrena los modelos
-finales segun la tabla de decision del walk-forward y guarda todo versionado con joblib.
-
-En produccion, cada dia nuevo se transforma con estos mismos objetos (transform_block / predict_dia);
-nada se reajusta. No toca pattern_discovery.py.
-
-Uso (desde src/data_analysis):
-    python congelar_pca.py                       # congela, guarda y verifica
-    python congelar_pca.py --n-estimators 30     # prueba rapida
-"""
 from __future__ import annotations
 import argparse, hashlib, json, platform
 from datetime import date
@@ -19,7 +9,9 @@ import pca_analysis as pca
 import test_pca as T
 from pca_bloques import BLOCKS, LOG1P, STATIC, CAL, check_cols, fit_block, master_features
 
-# hiperparametros validados en el walk-forward (mantener iguales a test_pca.XGB y a pca_regularizado.py)
+# En produccion, cada dia nuevo se transforma con estos mismos objetos (transform_block / predict_dia) nada se reajusta.
+
+# hiperparametros validados en el walk forward (mantener iguales a test_pca.XGB y a pca_regularizado.py)
 PARAMS = {
     "base": dict(T.XGB),
     "reg": {**T.XGB, "n_estimators": 150, "max_depth": 3, "learning_rate": 0.03,
@@ -41,7 +33,7 @@ CONFIG = {
 TEMP_TARGETS = ("T2M_MAX", "T2M_MIN")
 
 
-# ---------- climatologia congelada (misma formula que test_pca.anomalies, pero guardando el perfil) ----------
+# climatologia congelada (misma formula que test_pca.anomalies, pero guardando el perfil)
 def clim_profile(F: pd.DataFrame, col: str, mask, munis: pd.Index) -> np.ndarray:
     tr = F[mask]
     prof = (tr.groupby(["municipio", tr["date"].dt.dayofyear.clip(upper=366)])[col].mean().unstack()
@@ -103,7 +95,7 @@ def build_X(df, art, feats, rep, level) -> pd.DataFrame:
     return pd.concat([P, df[STATIC + CAL]], axis=1) if rep == "solo_pcs" else pd.concat([df[feats], P], axis=1)
 
 
-# ---------- congelado y entrenamiento ----------
+# congelado y entrenamiento
 def freeze_all(df: pd.DataFrame, feats: list[str]) -> dict:
     mask = pd.Series(True, index=df.index)            # todos los años disponibles
     munis = pd.Index(sorted(df["municipio"].unique()))
@@ -147,7 +139,7 @@ def train_models(df, art, feats) -> dict:
 
 
 def predict_dia(df_rows: pd.DataFrame, tgt: str, h: int, art: dict, models: dict) -> pd.DataFrame:
-    """Prediccion para filas nuevas del master (features ya construidas). Sin reajustar nada."""
+    # Prediccion para filas nuevas del master (features ya construidas) sin reajustar nada
     munis = pd.Index(art["munis"])
     out = df_rows[["municipio", "date"]].copy()
     out["fecha_objetivo"] = out["date"] + pd.Timedelta(days=h)
@@ -166,7 +158,7 @@ def predict_dia(df_rows: pd.DataFrame, tgt: str, h: int, art: dict, models: dict
     return out
 
 
-# ---------- guardado y verificacion ----------
+# guardado y verificacion 
 def save_all(art, models, out_dir: Path, master_path: Path, version: str) -> None:
     (out_dir / "modelos").mkdir(parents=True, exist_ok=True)
     joblib.dump(art, out_dir / "pca_bloques.joblib")
@@ -190,14 +182,14 @@ def verify(df, feats, out_dir: Path) -> None:
               for p in (out_dir / "modelos").glob("*.joblib")}
     mask = pd.Series(True, index=df.index)
 
-    # 1) transformar con el objeto congelado == ajustar y transformar en el mismo conjunto (fit_block)
+    # 1 transformar con el objeto congelado, ajustar y transformar en el mismo conjunto (fit_block)
     for n, cols in BLOCKS.items():
         s_ref, _ = fit_block(df, cols, mask)
         s_new = transform_block(df, art["blocks"][n])
         assert np.allclose(s_ref.to_numpy(), s_new.to_numpy(), rtol=1e-6, atol=1e-8), f"PCA congelado difiere en {n}"
     print("verif 1 OK: transformacion congelada == fit_block en los 3 bloques")
 
-    # 2) un dia nuevo transformado solo da lo mismo que dentro del lote (no depende de estadisticas del lote)
+    # 2 un dia nuevo transformado solo da lo mismo que dentro del lote (no depende de estadisticas del lote)
     rng = np.random.default_rng(0)
     for i in rng.choice(len(df), 5, replace=False):
         one, batch = df.iloc[[i]], df.iloc[max(0, i - 40): i + 1]
@@ -207,7 +199,7 @@ def verify(df, feats, out_dir: Path) -> None:
             assert np.allclose(a, b, rtol=1e-6, atol=1e-8), f"depende del lote en {n}"
     print("verif 2 OK: dia nuevo aislado == mismo dia dentro de un lote")
 
-    # 3) modelos recargados predicen lo mismo que la prediccion armada con los objetos recargados
+    # 3 modelos recargados predicen lo mismo que la prediccion armada con los objetos recargados
     last = df[df["date"] == df["date"].max()]
     for (tgt, h), m in models.items():
         p = predict_dia(last, tgt, h, art, models)
@@ -217,14 +209,16 @@ def verify(df, feats, out_dir: Path) -> None:
         want = raw if m["kind"] == "clf" else raw + clim_value(last, art["target_clim"][tgt], pd.Index(art["munis"]), h)
         assert np.allclose(got, want), f"prediccion distinta en {tgt} h={h}"
     print(f"verif 3 OK: {len(models)} modelos recargados predicen igual para {df['date'].max().date()}")
-    # 4) los objetivos sin modelo caen a climatologia
+    # 4 los objetivos sin modelo caen a climatologia
     for (tgt, h), c in CONFIG.items():
         if c["rep"] is None:
             assert (predict_dia(last, tgt, h, art, models)["fuente"] == "climatologia").all()
     print("verif 4 OK: horizontes sin modelo util usan climatologia")
 
 
-def main() -> None:
+def main() -> None:   
+    #   python congelar_pca.py                       # congela, guarda y verifica
+    #   python congelar_pca.py --n-estimators 30     # prueba rapida
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=None)
     ap.add_argument("--out", default=None, help="carpeta raiz de modelos (default: <repo>/models)")
