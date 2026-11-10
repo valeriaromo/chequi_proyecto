@@ -14,11 +14,13 @@ MODEL_MODULES = (
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the full model pipeline")
     parser.add_argument("--table", choices=sorted(cfg.TABLES), default="master")
-    table = parser.parse_args().table
+    parser.add_argument("--features", choices=cfg.FEATURE_SETS, default="base")
+    args = parser.parse_args()
 
     for module in MODEL_MODULES:
-        run_model(importlib.import_module(module).SPEC, table)
-    print(f"Report: {write_report(table)}")
+        run_model(importlib.import_module(module).SPEC, args.table, args.features)
+
+    print(f"Report: {write_report(args.table, args.features)}")
 
 
 if __name__ == "__main__":

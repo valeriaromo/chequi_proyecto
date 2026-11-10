@@ -164,6 +164,7 @@ def verify(df: pd.DataFrame, db_path: Path, art_dir: Path, pc_cols: list[str], l
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    # para back test python3 -m src.pipeline.build_master_pca --fit-until 2023-12-31
     ap.add_argument("--data", default=None, help=f"master_table (default: {MASTER_TABLE_PATH})")
     ap.add_argument("--out-dir", default=None, help="carpeta de salida (default: data/master)")
     ap.add_argument("--max-level", type=float, default=0.95, help="varianza acumulada minima por bloque a guardar")

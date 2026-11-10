@@ -85,18 +85,20 @@ def _run_fold(spec, data, year):
     return row, predictions, model, X_test, y_test
 
 
-def _save_plots(spec, predictions, out):
-    title, y, pred = spec.name, predictions["y_true"], predictions["y_pred"]
+def _save_plots(spec, predictions, importance, out, tag):
+    title, y, pred = f"{spec.name} [{tag}]", predictions["y_true"], predictions["y_pred"]
     if spec.task == "classification":
         plots.plot_confusion_matrix(y, pred, title, out / f"{spec.slug}_confusion_matrix.png")
         plots.plot_roc(y, predictions["y_score"], title, out / f"{spec.slug}_roc.png")
     else:
         plots.plot_pred_vs_actual(y, pred, title, out / f"{spec.slug}_pred_vs_actual.png")
+    plots.plot_importance(importance, f"{spec.name} – permutation importance [{tag}]",
+                          out / f"{spec.slug}_importance.png")
 
 
-def run_model(spec: ModelSpec, table: str = "master") -> None:
-    data = build_dataset(spec.task, table)
-    out = cfg.output_dir(table)
+def run_model(spec: ModelSpec, table: str = "master", feature_set: str = "base") -> None:
+    data = build_dataset(spec.task, table, feature_set)
+    out = cfg.output_dir(table, feature_set)
 
     rows, frames, last = [], [], None
     for year in cfg.FOLD_YEARS:
@@ -110,6 +112,7 @@ def run_model(spec: ModelSpec, table: str = "master") -> None:
 
     folds, predictions = pd.DataFrame(rows), pd.concat(frames, ignore_index=True)
     pooled = compute_metrics(spec.task, predictions["y_true"], predictions["y_pred"], predictions["y_score"])
+
     if spec.task == "classification":
         baseline = {"positive_rate": float(predictions["y_true"].mean())}
     else:
@@ -119,21 +122,32 @@ def run_model(spec: ModelSpec, table: str = "master") -> None:
     importance = _importance(model, X_last, y_last, spec.task)
 
     summary = {
-        "name": spec.name, "task": spec.task, "slug": spec.slug, "table": table,
-        "model_type": spec.model_type, "params": spec.params,
-        "complexity": spec.complexity, "interpretability": spec.interpretability,
-        "deployment": spec.deployment, "data_needs": spec.data_needs,
-        "n_features": data.X.shape[1], "n_rows": len(data.X),
+        "name": spec.name,
+        "task": spec.task,
+        "slug": spec.slug,
+        "table": table,
+        "feature_set": feature_set,
+        "model_type": spec.model_type,
+        "params": spec.params,
+        "complexity": spec.complexity,
+        "interpretability": spec.interpretability,
+        "deployment": spec.deployment,
+        "data_needs": spec.data_needs,
+        "n_features": data.X.shape[1],
+        "features": list(data.X.columns),
+        "n_rows": len(data.X),
         "fit_seconds": float(folds["fit_seconds"].sum()),
         "predict_seconds": float(folds["predict_seconds"].sum()),
         "pooled": {k: float(v) for k, v in pooled.items()},
         "baseline": baseline,
     }
+
     folds.to_csv(out / f"{spec.slug}_folds.csv", index=False)
     predictions.to_parquet(out / f"{spec.slug}_predictions.parquet", index=False)
     importance.to_csv(out / f"{spec.slug}_importance.csv", index=False)
     (out / f"{spec.slug}_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    _save_plots(spec, predictions, out)
+
+    _save_plots(spec, predictions, importance, out, f"{feature_set}, {data.X.shape[1]} features")
     print(f"[{spec.name}] done -> {out}")
 
 
@@ -141,4 +155,6 @@ def main(spec: ModelSpec) -> None:
     """Entry point for each model script."""
     parser = argparse.ArgumentParser(description=f"Train and evaluate: {spec.name}")
     parser.add_argument("--table", choices=sorted(cfg.TABLES), default="master")
-    run_model(spec, parser.parse_args().table)
+    parser.add_argument("--features", choices=cfg.FEATURE_SETS, default="base")
+    args = parser.parse_args()
+    run_model(spec, args.table, args.features)
