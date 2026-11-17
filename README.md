@@ -13,20 +13,20 @@ Pipeline reproducible que ingiere datos ambientales públicos, construye una tab
 
 ## Contenido
 
-1. [Estructura del repositorio](#estructura-del-repositorio)
-2. [Ejecución e instalación](#ejecución-e-instalación)
-3. [Bases de datos e ingesta](#bases-de-datos-e-ingesta)
-4. [Limpieza y tabla maestra](#limpieza-y-tabla-maestra)
-5. [Tabla con PCA](#tabla-con-pca)
-6. [Conflicto de OpenAQ y MAIAC](#conflicto-de-openaq-y-maiac)
-7. [Decisiones antes del modelo](#decisiones-antes-del-modelo)
-8. [Reglas de entrenamiento](#reglas-de-entrenamiento)
-9. [Resultados de la línea XGBoost](#resultados-de-la-línea-xgboost)
-10. [Comparación de modelos (`src/pipeline/models`)](#comparación-de-modelos-srcpipelinemodels)
-11. [Cómo analizar los resultados](#cómo-analizar-los-resultados)
-12. [Monitoreo](#monitoreo)
-13. [Pendientes y límites conocidos](#pendientes-y-límites-conocidos)
-14. [Datos, licencias y atribución](#datos-licencias-y-atribución)
+1. [Estructura del repositorio](##estructura-del-repositorio)
+2. [Ejecución e instalación](##ejecución-e-instalación)
+3. [Bases de datos e ingesta](##bases-de-datos-e-ingesta)
+4. [Limpieza y tabla maestra](##limpieza-y-tabla-maestra)
+5. [Tabla con PCA](##tabla-con-pca)
+6. [Conflicto de OpenAQ y MAIAC](##conflicto-de-openaq-y-maiac)
+7. [Decisiones antes del modelo](##decisiones-antes-del-modelo)
+8. [Reglas de entrenamiento](##reglas-de-entrenamiento)
+9. [Resultados de la línea XGBoost](##resultados-de-la-línea-xgboost)
+10. [Comparación de modelos (`src/pipeline/models`)](##comparación-de-modelos-srcpipelinemodels)
+11. [Cómo analizar los resultados](##cómo-analizar-los-resultados)
+12. [Monitoreo](##monitoreo)
+13. [Pendientes y límites conocidos](##pendientes-y-límites-conocidos)
+14. [Datos, licencias y atribución](##datos-licencias-y-atribución)
 
 ---
 
@@ -169,6 +169,22 @@ Verificar: el README original habla de 53 features auditadas, pero build_master_
 53 features:Subconjunto de variables meteorológicas dinámicas estrictamente auditadas contra *data leakage* temporal hasta el día $t$.
 65 features (`base`): Conjunto numérico completo de la tabla maestra (agrega métricas de radiación y estacionalidad amplia). Es la corrida recomendada.
 72 features (`all`): Suma a la base las 7 variables estáticas (geometría, población, viviendas y declaratorias históricas de ciclones).
+
+## Auditoría de targets y calibración (lluvia, h=1)
+
+**Scripts:** `src/pipeline/audit_targets.py`, `src/pipeline/audit_calibration.py` (salidas en `outputs_fase2/audit/`).
+
+**Targets:** 5 chequeos en PASS sobre `master_table.parquet` (grid diario sin huecos, `shift(-h)` igual a reconstrucción independiente por fecha+h para rain y tmin, sin contaminación entre municipios, sin features copia del target o del futuro). El solapamiento train/test por horizonte es de 11 filas por fold y se excluye con `train_mask`.
+
+**Calibración (walk-forward 2023-2026, referencia: climatología por municipio y día del año):**
+- BSS = 0.234, IC95% [0.170, 0.284] (bootstrap por bloques de mes). La habilidad se sostiene.
+- El modelo crudo es sobreconfiado: pendiente 0.66, ECE 0.040, `mean_p` 0.152 frente a `obs_rate` 0.18.
+- Por fold, la pendiente cruda va de 0.61 a 0.71 (estable) y el intercepto de -0.29 a +0.09 (deriva de tasa base).
+- Platt/isotónica bajan el ECE a ~0.013 sin mejorar el BSS: ganan confiabilidad, no habilidad.
+
+**Pendiente:** regularizar el modelo (`max_depth`, `min_child_weight`, `reg_lambda`) con criterio fijado antes de mirar los folds, y recalibrar con varios años previos o monitorear `mean_p` frente a `obs_rate` en operación.
+
+**Limitaciones:** solo 4 folds anuales; calibrar con un único año previo es inestable en el intercepto; `master_table_pca_fit20231231` no es válida para el fold 2023.
 
 ## Reglas de entrenamiento
 Targets con groupby("municipio")[var].shift(-h), h ≥ 1, fuera del master.

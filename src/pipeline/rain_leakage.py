@@ -203,7 +203,7 @@ def eval_scope(var="T2M_MAX"):  # cambiar var segun la variable objetivo a evalu
     print(r.round(3).to_string(index=False))
     print("\nPromedio por horizonte:")
     print(r.groupby("h")[["skill_global", "skill_por_muni"]].mean().round(3))
-    print("\nElige por muni solo si gana en la mayoria de folds y h; ""empate => global (menos mantenimiento).")
+    print("\n Elige por muni solo si gana en la mayoria de folds y h; empate => global (menos mantenimiento).")
 
 
 if __name__ == "__main__":
