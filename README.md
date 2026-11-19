@@ -144,6 +144,47 @@ Faltantes en AOD (MAIAC): Presenta un 20.6% de datos faltantes a nivel anual, co
 Incertidumbre CHIRPS vs. NASA POWER: Coinciden en clasificar días secos/mojados en el 84.2% de los casos, con una correlación de Spearman $\rho = 0.49$.
 Estabilidad Térmica: `T2M_MIN` muestra una distribución simétrica con media de $10.37^\circ\text{C}$ y mediana de $10.80^\circ\text{C}$, confirmándose como un objetivo de regresión estable.
 
+# Segmentación inteligente K means
+
+`src/pipeline/segmentation/` agrupa los municipios-mes de Aguascalientes en regímenes ambientales con K-Means. Es un análisis descriptivo: no genera predicciones ni evaluaciones oficiales, y el AOD, los lags, las medias móviles, los targets y las columnas estáticas o de ciclones quedan fuera.
+
+`seg_config.py` concentra las constantes: ruta del master, variables, umbral de varianza de PCA (0.90), rango de K (2 a 10), K mínimo final (3), semilla y umbrales de preparación para analítica avanzada.
+
+`prepare.py` agrega las variables meteorológicas crudas por municipio y mes (la lluvia se suma y el resto se promedia), descarta los meses con menos de 20 días observados, estandariza con z-score y aplica un PCA único sobre toda la matriz municipio-mes. Es distinto del PCA walk-forward de `src/data_analysis/pca_walkforward.py`: aquel se ajusta por fold para evitar fuga en el pronóstico, y este es descriptivo, por lo que un ajuste global es suficiente.
+
+`kmeans.py`corre K-Means sobre los componentes para K de 2 a 10. Reporta inercia y silhouette, marca el codo y elige la K con mayor silhouette entre K ≥ 3, porque K=2 suele ser solo una separación estacional. El parámetro `--k` de `run_all.py` permite forzar otra K.
+
+`characterize.py`  calcula el perfil de cada cluster, la varianza de cada variable explicada por los clusters (η²) y la validación:
+- silhouette global y por cluster;
+- Davies-Bouldin y Calinski-Harabasz;
+- estabilidad por bootstrap (ARI en 30 ajustes con submuestras del 80 %);
+- NMI contra mes calendario y contra municipio.
+
+`visualize.py`genera las figuras en `outputs/`:
+- PCA scatter con centroides;
+- pair plot;
+- heatmap de centroides;
+- tamaños de cluster;
+- distribución por mes calendario;
+- composición por municipio.
+
+`report.py`  escribe `outputs/intelligent_segmentation.md` con todas las matrices, la clasificación del proyecto (READY FOR ADVANCED ANALYTICS, CONDITIONALLY READY o ADDITIONAL DATA REQUIRED) y el Executive Summary.
+
+## Ejecución de la segmentación
+
+```bash
+cd src/pipeline/segmentation
+python run_all.py          # pipeline completo
+python run_all.py --k 4    # fuerza K
+python report.py           # regenera solo el markdown a partir de outputs/
+```
+
+Antes de correrlo hay que revisar en `seg_config.py` el nombre del archivo master y los de las columnas de `VARS`; si algún nombre no coincide, `prepare.py` se detiene y lista las columnas disponibles.
+
+## Resultados y límites de la segmentación
+
+Los resultados completos están en `src/pipeline/segmentation/outputs/intelligent_segmentation.md`. Los segmentos pueden ser en buena medida estacionales, y el reporte lo cuantifica con el NMI contra el mes calendario. Solo hay 11 municipios que comparten sistemas meteorológicos. La agregación mensual oculta la variabilidad intramensual. K-Means asume clusters compactos y de tamaño similar. No hay validación externa de los segmentos.
+
 ## Conflicto de OpenAQ y MAIAC
 
 clean.py aplicó a ambas fuentes nombres normalizados, sentinelas y fuera de rango a NaN, y duplicados eliminados. En MAIAC se verificó la coherencia entre aod_055_count, aod_055_mean y aod_qa_best_pct, y se marcaron celdas con menos de 10 píxeles.
