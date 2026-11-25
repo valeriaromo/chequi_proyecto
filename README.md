@@ -351,60 +351,97 @@ Monitoreo
 La Fase 3 (monitor_rain.py) congela los dos modelos del piloto (entrenados hasta [FECHA_CORTE]) y los monitorea con una ventana de [VENTANA] días. Calcula el skill móvil de 90 días contra el baseline congelado: si es negativo hoy y hace 90 días, el estado es RETIRAR; si solo es negativo hoy, ALERTA. También vigila el porcentaje de NaN en las columnas base. Para ensayarlo hace falta un corte anterior a mediados de 2025 y al menos 180 días posteriores.
 
 Completa [FECHA_CORTE] y [VENTANA] con los valores reales del script.
+# Deep Learning (`pipeline/deep_learning/` y `pipeline/dl_validation/`)
 
-# Deep Learning (`pipeline/deep_learning/`)
+Evalúa si un LSTM multivariante mejora a los modelos XGBoost congelados en las dos tareas del piloto (ocurrencia de lluvia ≥1 mm y T2M_MIN, ambas a h=1). No reemplaza al pipeline de ML: usa el mismo master, la misma validación walk-forward y los mismos baselines. **Conclusión: MACHINE LEARNING SUFFICIENT en ambos targets; el LSTM no justifica su complejidad.**
 
-Evalúa si un LSTM multivariante mejora a los modelos XGBoost congelados en las dos tareas del piloto (ocurrencia de lluvia ≥1 mm y T2M_MIN, ambas a h=1). No reemplaza al pipeline de ML: usa el mismo master, la misma validación walk-forward y los mismos baselines.
-
-## Estructura
+## `deep_learning/`: el modelo
 
 | Archivo | Función |
-| `params.py` | Única fuente de configuración: ventana, hiperparámetros, registro de targets, rutas |
-| `data.py` | Carga del master, targets (`shift(-h)` por municipio), ffill hacia atrás, escalado por fold y ventanas por municipio |
-| `model.py` | `MultiTaskLSTM`: LSTM compartido, capa densa compartida y una cabeza lineal por target |
-| `train.py` | Entrenamiento con early stopping, predicción y curvas de aprendizaje |
-| `evaluate.py` | Métricas de clasificación (accuracy, precision, recall, F1, ROC AUC, BSS, ECE) y regresión (MAE, RMSE, R²); carga del baseline |
-| `report.py` | Genera `deep_learning.md` con la matriz de cada paso y el veredicto |
-| `run.py` | Orquesta todo |
+|---|---|
+| `params.py` | Única fuente de configuración: ventana, hiperparámetros, registro `TARGETS`, rutas |
+| `data.py` | Carga del master, targets (`shift(-h)` por municipio), ffill hacia atrás, escalado por fold, ventanas por municipio |
+| `model.py` | `MultiTaskLSTM`: LSTM compartido, capa densa y una cabeza lineal por target |
+| `train.py` | Entrenamiento con early stopping, predicción, curvas de aprendizaje |
+| `evaluate.py` | Accuracy, precision, recall, F1, ROC AUC, BSS, ECE (clasificación); MAE, RMSE, R² (regresión) |
+| `report.py`, `run.py` | Generan `deep_learning.md` (Pasos 2 a 8) y orquestan la corrida |
 
-Ejecución: `python pipeline/deep_learning/run.py`. Salidas en `pipeline/deep_learning/outputs/`: `results.json`, `history.json`, `figures/learning_curves.png` y `deep_learning.md`.
+**Arquitectura:** ventana de 30 días × 66 features por municipio (sin AOD ni `qc_aod_imputed`), LSTM de 1 capa (64 unidades) → Dropout 0.3 → Dense 32 (ReLU) → una cabeza lineal por target (logit para lluvia, valor estandarizado para T2M_MIN). **Entrenamiento:** Adam (lr 1e-3), batch 256, máximo 50 épocas, early stopping con paciencia 5, pérdida BCE-with-logits + MSE con pesos 1.0. **Validación:** walk-forward expansivo, test 2023–2026, validación = año anterior; escalador, estandarización del target y climatología se ajustan solo con años de entrenamiento.
 
-## Arquitectura y entrenamiento
+Para añadir un target se agrega una entrada en `TARGETS` (tipo, columna, umbral, peso, CSV de baseline) y su clave en `ACTIVE_TARGETS`.
 
-- **Entrada:** ventana de 30 días × 66 features por municipio (las mismas del master; sin AOD ni `qc_aod_imputed`), secuencia a uno, h=1.
-- **Red:** LSTM de 1 capa (64 unidades) → Dropout 0.3 → Dense 32 (ReLU) → una cabeza lineal por target. La cabeza de lluvia produce un logit (sigmoide al predecir); la de T2M_MIN es lineal.
-- **Pérdida:** suma ponderada de BCEWithLogits (lluvia) y MSE sobre el target estandarizado (T2M_MIN), pesos 1.0.
-- **Optimización:** Adam (lr 1e-3), batch 256, máximo 50 épocas, early stopping con paciencia 5 y restauración de los mejores pesos. Semilla fija (42).
-- **Validación:** walk-forward con ventana expansiva (test 2023–2026). Para cada año de test, la validación es el año anterior y el entrenamiento los anteriores. Escalador, estandarización del target y climatología del BSS se ajustan solo con entrenamiento. Las épocas usadas fueron 15, 11, 12 y 13; unos 104 s en total sobre CPU (35,938 parámetros).
+### Cambios hechos durante la validación
 
-## Resultados (media de 4 folds)
+- `targets` y `seed` ahora se pasan como argumentos a `add_targets`, `build_fold`, `fit`, `predict`, `loss_fn` y `evaluate_fold`. Antes se leían de `params` al importar, por lo que cambiarlos en tiempo de ejecución no tenía efecto: las 5 semillas y las 3 configuraciones del primer benchmark producían la misma corrida, y las cifras de T2M_MIN de la configuración de un solo target correspondían a la columna equivocada.
+- `build_fold` purga las filas de train y validación cuyo target cae en el periodo siguiente (h días), para que ningún target cruce el corte entre splits.
+- Los `groupby` usan `observed=True`.
+- `FASE2_DIR` se define en `params.py` y `dl_validation/cfg.py` lo reutiliza.
+- La primera comparación (+0.188 de ganancia en lluvia y veredicto "DEEP LEARNING RECOMMENDED") era inválida: el baseline se promedió sobre los horizontes h=1, 3 y 7 de `rain_eval.csv`. Se retira.
 
-| Target | Métrica | Valor |
-Lluvia ≥1 mm (h=1) | BSS | 0.233 (0.301 / 0.178 / 0.262 / 0.190) |
-ROC AUC | 0.842 |
-Accuracy / Precision / Recall / F1 | 0.872 / 0.711 / 0.462 / 0.558 |
-ECE (calibración) | 0.036 |
-T2M_MIN (h=1) | MAE / RMSE / R² | 1.112 / 1.429 / 0.852 |
+## `dl_validation/`: la validación
 
-El BSS del LSTM es positivo en los 4 años y la calibración es buena (ECE < 0.05), pero el recall con umbral 0.5 es bajo: el modelo es conservador y pierde más de la mitad de los días de lluvia.
+| Archivo | Función |
+|---|---|
+| `cfg.py` | Semillas, configuraciones, baselines XGBoost (CSV, filtros, métrica), umbrales del gate, parámetros de explicabilidad |
+| `common.py` (hoy en `pipeline/common.py`) | Carga, entrenamiento por fold, lectura del baseline, climatología suavizada, persistencia y scoring |
+| `leakage.py` | Pruebas de integridad de targets |
+| `benchmark.py` | 5 semillas × 4 folds × 3 configuraciones (rain_only, t2m_only, multitask) |
+| `gate.py` | Decide el veredicto por target |
+| `explain.py` | Permutation importance (por feature, grupo y bloque de lags) y gradient×input; solo si un target pasa el gate |
+| `write_report.py`, `run_validation.py` | Generan `dl_validation.md` y ejecutan las etapas (`python run_validation.py [leakage benchmark gate explain report]`) |
 
-## Comparación con XGBoost
+Salidas en `pipeline/dl_validation/outputs/`: `leakage.json`, `benchmark_runs.csv`, `benchmark_summary.json`, `calibration.csv`, `gate.json`, `explain.json`, `figures/` y `dl_validation.md`.
 
-El BSS del LSTM en lluvia (0.233) es prácticamente igual al reportado para XGBoost a h=1 (0.24, Fase 2). El comparador automático de `report.py` mostró una ganancia de +0.188, pero provino de promediar el baseline sobre horizontes (h=1, 3 y 7) por no filtrar `rain_eval.csv` por h=1, y por eso no es válida. Además, el BSS del LSTM usa climatología municipio × mes y el de XGBoost usa climatología suavizada, por lo que no son idénticamente comparables. Para T2M_MIN no hay comparación automática: el skill de XGBoost (0.19) está expresado contra baseline, no en MAE/R².
+### Proceso
 
-**Estado: ADDITIONAL EXPERIMENTATION REQUIRED.** No hay evidencia de que el LSTM supere a XGBoost; el costo extra (dependencia de torch, secuencias, reentrenamiento) no está justificado todavía.
+1. **Integridad:** se verifican huecos de fechas por municipio, la alineación de cada target contra una reconstrucción por unión de fechas (no por `shift`), y un placebo con targets barajados dentro de cada municipio, que no debe mostrar habilidad.
+2. **Benchmark justo:** cada modelo se compara en el mismo año de test contra el mismo baseline. En clasificación se usa BSS contra climatología suavizada por día del año. En regresión, skill = 1 − MAE / mejor(persistencia, climatología suavizada). El umbral de decisión de lluvia se ajusta en el año de validación (máximo F1) y se aplica en test. El baseline XGBoost se lee de `outputs_fase2/` (lluvia: `bss` a h=1; T2M_MIN: `skill_global` a h=1).
+3. **Gate:** el LSTM se recomienda solo si supera a XGBoost por más de max(0.02, 2 × desviación entre semillas) en todos los folds y su skill es positivo en todos. Los empates se resuelven a favor de XGBoost.
+4. **Explicabilidad:** solo se ejecuta sobre un target que pase el gate.
 
-## Pendientes antes de recomendar
+### Resultados
 
-1. Filtrar el baseline por h=1 (`baseline_filter` en `params.py`) y usar la misma climatología en ambos modelos.
-2. Calcular el skill de T2M_MIN del LSTM contra el mejor baseline suavizado para compararlo con el 0.19 de XGBoost.
-3. Repetir con 3–5 semillas; con 4 folds y una semilla, la varianza es desconocida y los intervalos de confianza no son creíbles.
-4. Probar la construcción de targets contra leakage (pendiente también en el ML).
-5. Revisar el umbral de decisión de lluvia (0.5 da recall 0.46).
+| Chequeo | Resultado |
+|---|---|
+| Huecos de fechas | 0 |
+| Desalineaciones de targets | 0 de 26,433 (ambos targets) |
+| Placebo (test 2025) | BSS 0.003 (lluvia), R² 0.009 (T2M_MIN): sin habilidad espuria |
 
-## Extender a más variables
+Skill (BSS en lluvia) por año de test:
 
-Agregar un target es añadir una entrada en `TARGETS` (`kind`, columna, umbral, peso, CSV de baseline) y su clave en `ACTIVE_TARGETS`. Según la auditoría de ML, T2M_MAX, monto de lluvia y h=3/h=7 no tienen habilidad, así que no se recomienda activarlos sin evidencia nueva.
+| Target | Modelo | Media | 2023 | 2024 | 2025 | 2026 |
+|---|---|---|---|---|---|---|
+| Lluvia ≥1 mm | LSTM multitask (std semillas 0.010) | 0.208 | 0.208 | 0.155 | 0.257 | 0.213 |
+| | LSTM solo lluvia | 0.204 | 0.207 | 0.150 | 0.257 | 0.201 |
+| | XGBoost | 0.236 | 0.291 | 0.159 | 0.245 | 0.248 |
+| T2M_MIN | LSTM multitask (std 0.009) | 0.165 | 0.122 | 0.071 | 0.189 | 0.276 |
+| | LSTM solo T2M_MIN | 0.152 | 0.111 | 0.045 | 0.172 | 0.279 |
+| | XGBoost (global) | 0.190 | 0.184 | 0.114 | 0.181 | 0.281 |
+
+Lluvia, clasificador multitask: ROC AUC 0.839, ECE 0.037, umbral ajustado 0.37, precision 0.601, recall 0.576, F1 0.582.
+
+| Target | Ganancia media vs XGBoost | Umbral | Folds ganados | Multitask − single | Veredicto |
+|---|---|---|---|---|---|
+| Lluvia | −0.027 | 0.021 | 1/4 | +0.005 | MACHINE LEARNING SUFFICIENT |
+| T2M_MIN | −0.025 | 0.020 | 1/4 | +0.013 | MACHINE LEARNING SUFFICIENT |
+
+### Interpretación
+
+- El LSTM queda por debajo de XGBoost en ambos targets con una diferencia mayor que la variabilidad entre semillas, y gana solo 1 de 4 folds en cada uno (2025 en ambos casos; en lluvia 2025 es 0.257 contra 0.245, y en T2M_MIN 0.189 contra 0.181).
+- El encoder compartido (multitask) no aporta frente a un modelo por target: la diferencia (+0.005 y +0.013) está dentro del ruido.
+- Con ~2,400 observaciones diarias por municipio, el costo adicional de un LSTM (dependencia de torch, secuencias, reentrenamiento) no se traduce en habilidad.
+- No se activa la expansión a más variables, ya que XGBoost tampoco mostró habilidad en T2M_MAX, monto de lluvia ni h=3/h=7.
+
+### Limitaciones
+
+- 4 folds, 2026 parcial: los intervalos de confianza no son creíbles. La desviación entre semillas mide solo la variabilidad de inicialización, no la de los datos.
+- El baseline XGBoost proviene de `outputs_fase2/` con su propia climatología suavizada; el LSTM se evalúa contra una climatología suavizada ajustada con años anteriores al test. Son comparables pero no idénticas.
+- La calibración del LSTM se midió (ECE 0.037), pero la de XGBoost sigue pendiente de revisión.
+- Los datos de NASA POWER, CHIRPS y MAIAC pueden tener revisiones históricas; no hay regla de detección todavía.
+
+## Siguiente paso
+
+Cerrada la línea de DL, la explicabilidad se aplica a los modelos XGBoost congelados (TreeSHAP, permutation importance por grupo de features y estabilidad entre los 4 folds) en un subdirectorio `pipeline/xai/`. Reabrir DL solo si cambian los datos (más años o fuentes) y el gate vuelve a evaluarse con las mismas reglas.
 
 ## Pendientes y límites conocidos
 Definir quién re-entrena, monitorea y retira el modelo.
