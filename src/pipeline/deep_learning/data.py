@@ -10,8 +10,8 @@ def load_master():
     return df.sort_values(["municipio", "date"]).reset_index(drop=True)
 
 
-def add_targets(df):
-    for t in P.ACTIVE_TARGETS:
+def add_targets(df, targets):
+    for t in targets:
         spec = P.TARGETS[t]
         s = df.groupby("municipio", observed=True)[spec["col"]].shift(-P.HORIZON)
         df[f"y_{t}"] = (s >= spec["thr"]).astype(float).where(s.notna()) if spec["kind"] == "clf" else s
@@ -24,7 +24,7 @@ def feature_cols(df):
 
 
 def ffill_features(df, feats):
-    df[feats] = df.groupby("municipio", observed=True)[feats].ffill()  # past only imputation
+    df[feats] = df.groupby("municipio", observed=True)[feats].ffill()  # past-only imputation
     return df
 
 
@@ -41,14 +41,15 @@ def sequences(df, feats, ycols):
     return X[ok], Y[ok], D[ok], M[ok]
 
 
-def build_fold(df, feats, test_year):
+def build_fold(df, feats, test_year, targets):
+    """Scaler, target scale and climatology are fit on training years only."""
     fit = df[df.year < test_year - 1]
     mu, sd = fit[feats].mean(), fit[feats].std().replace(0, 1).fillna(1)
     s = df.copy()
     s[feats] = ((df[feats] - mu) / sd).fillna(0).astype(np.float32)
 
     yscale, clim = {}, {}
-    for t in P.ACTIVE_TARGETS:
+    for t in targets:
         c = f"y_{t}"
         f2 = fit.dropna(subset=[c])
         if P.TARGETS[t]["kind"] == "reg":
@@ -57,7 +58,10 @@ def build_fold(df, feats, test_year):
         else:
             clim[t] = (f2.groupby(["municipio", f2.date.dt.month], observed=True)[c].mean(), f2[c].mean())
 
-    X, Y, D, M = sequences(s, feats, [f"y_{t}" for t in P.ACTIVE_TARGETS])
-    yr = pd.DatetimeIndex(D).year
-    tr, va, te = yr < test_year - 1, yr == test_year - 1, yr == test_year
-    return dict(Xtr=X[tr], Ytr=Y[tr], Xva=X[va], Yva=Y[va], Xte=X[te], Yte=Y[te],dates_te=D[te], mun_te=M[te], yscale=yscale, clim=clim)
+    X, Y, D, M = sequences(s, feats, [f"y_{t}" for t in targets])
+    d, h = pd.DatetimeIndex(D), pd.Timedelta(days=P.HORIZON)
+    tr = d < pd.Timestamp(test_year - 1, 1, 1) - h                     # purge: targets must not reach into next split
+    va = (d >= pd.Timestamp(test_year - 1, 1, 1)) & (d < pd.Timestamp(test_year, 1, 1) - h)
+    te = d.year == test_year
+    return dict(Xtr=X[tr], Ytr=Y[tr], Xva=X[va], Yva=Y[va], Xte=X[te], Yte=Y[te],
+                dates_te=D[te], mun_te=M[te], yscale=yscale, clim=clim)

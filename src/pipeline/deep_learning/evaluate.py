@@ -1,7 +1,8 @@
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from sklearn.metrics import (accuracy_score, brier_score_loss, f1_score, mean_absolute_error,precision_score, r2_score, recall_score, roc_auc_score)
+from sklearn.metrics import (accuracy_score, brier_score_loss, f1_score, mean_absolute_error,
+                             precision_score, r2_score, recall_score, roc_auc_score)
 import params as P
 
 
@@ -26,9 +27,9 @@ def reg_metrics(y, p):
     return dict(mae=mean_absolute_error(y, p), rmse=float(np.sqrt(np.mean((y - p) ** 2))), r2=r2_score(y, p))
 
 
-def evaluate_fold(fold, pred):
+def evaluate_fold(fold, pred, targets):
     out = {}
-    for i, t in enumerate(P.ACTIVE_TARGETS):
+    for i, t in enumerate(targets):
         y, p = fold["Yte"][:, i], pred[:, i]
         if P.TARGETS[t]["kind"] == "clf":
             out[t] = clf_metrics(y, p, fold["clim"][t], fold["mun_te"], fold["dates_te"])
@@ -39,7 +40,7 @@ def evaluate_fold(fold, pred):
 
 
 def load_baseline(target):
-    # Load baseline results for a target from its CSV file if it exists
+    """Per-year ML baseline metrics from the outputs_fase2 CSV (needs a 'year' column; filter by horizon in params)."""
     spec = P.TARGETS[target]
     path = spec.get("baseline_csv")
     if not path or not Path(path).exists():
