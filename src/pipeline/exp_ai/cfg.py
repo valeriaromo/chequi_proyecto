@@ -22,12 +22,18 @@ TARGETS = {
                     unit="tomorrow's T2M_MIN (°C)"),
 }
 
-# EDIT: must match the frozen XGBoost pilot hyper-parameters
+# base hyper-parameters; max_depth, min_child_weight, learning_rate, n_estimators are tuned in train.py
 PARAMS = dict(n_estimators=400, max_depth=4, learning_rate=0.05, subsample=0.8,
               colsample_bytree=0.8, random_state=SEED, n_jobs=-1)
+
+# walk-forward tuning: each year in CV_YEARS is validated on a model trained on all earlier years (purged by H)
+CV_YEARS = (2023, 2024)
+GRID = dict(max_depth=(3, 4, 6), min_child_weight=(1, 10), lr_n=((0.05, 400), (0.03, 600)))
 
 EXTRA_DROP = []       # extra columns to exclude from X
 
 DL_VERDICT = ("dl_validation gate: no target passed (rain_occ: DL 0.208 vs XGBoost 0.236; "
               "t2m_min: DL 0.165 vs XGBoost 0.190) -> MACHINE LEARNING SUFFICIENT, "
-              "so the frozen XGBoost models are the ones explained.")
+              "so the XGBoost models are the ones explained. Note: features (domain-wide precipitation, "
+              "trends, dewpoint) and hyper-parameters (walk-forward tuning) were updated after this gate; "
+              "the gate numbers refer to the earlier pilot and were not re-run.")

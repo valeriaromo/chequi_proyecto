@@ -5,7 +5,8 @@ level = lambda v, hi, mid: "HIGH" if v >= hi else "MEDIUM" if v >= mid else "LOW
 NAMES = dict(transparency="Transparency", consistency="Consistency", interpretability="Interpretability",
              trustworthiness="Trustworthiness", stakeholder="Stakeholder Readiness", ethics="Ethical Considerations")
 STATIC_PREFIX = ("geom_", "elev", "dist_")
-
+PERSIST_CLF_SHARE = 0.10  # classifier: same-day precipitation share of total impact that flags persistence
+SAME_DAY_PRECIP = ("precipitation_mm", "PRECTOTCORR", "dom_precip_mean", "dom_prectot_mean", "dom_precip_wet", "dom_prectot_wet")
 
 def sign_flips(matrix):
     """Features whose own direction is opposite to their lag's direction (correlated-feature attribution)."""
@@ -30,36 +31,50 @@ def per_target(name):
     transp = "HIGH" if exact and s["stability_rho"] >= 0.8 else "MEDIUM" if exact else "LOW"
     cons = "HIGH" if agree >= 0.6 and s["stability_rho"] >= 0.8 else "MEDIUM" if agree >= 0.4 and s["stability_rho"] >= 0.6 else "LOW"
     interp = level(s["top5_mass"], 0.5, 0.3)
-    stake = level(s["top5_mass"], 0.6, 0.4) if s["top10_mass"] >= 0.5 else "LOW"
-
     skill_ok = m["bss"] > 0 if kind == "clf" else m.get("skill_vs_persistence", m["r2"]) > 0
     calib_ok = m["ece"] <= 0.05 if kind == "clf" else True
 
-    # ---- risk flags (weaknesses revealed by the explanations)
-    flags = []
+    # ---- flags first: ethical (bias / proxy features) vs model-quality (Step 6 risks)
+    eth_flags, flags = [], []
     if s["bias_ratio"] >= 1.5:
-        flags.append(f"error differs {s['bias_ratio']:.1f}x across municipalities")
+        eth_flags.append(f"error differs {s['bias_ratio']:.1f}x across municipalities")
+    static = [f for f in s["importance"] if f.startswith(STATIC_PREFIX)]
+    tot = max(sum(s["importance"].values()), 1e-12)
+    static_share = sum(s["importance"][f] for f in static) / tot
+    if static and static_share > 0.03:
+        eth_flags.append(f"static municipality identifiers act as features ({static_share:.0%} of impact: {', '.join(static[:3])})")
     if s["top1_share"] > 0.4:
         flags.append(f"single-driver dependence ({s['top1_share']:.0%} on one feature)")
     if not calib_ok:
         flags.append(f"probabilities miscalibrated (ECE {m['ece']:.3f})")
     if cons == "LOW":
         flags.append("SHAP and LIME disagree")
-    static = [f for f in s["importance"] if f.startswith(STATIC_PREFIX)]
-    static_share = sum(s["importance"][f] for f in static) / max(sum(s["importance"].values()), 1e-12)
-    if static and static_share > 0.03:
-        flags.append(f"static municipality identifiers act as features ({static_share:.0%} of impact: {', '.join(static[:3])})")
-    if kind == "reg" and s["matrix"][0]["feature"] == src:
-        flags.append(f"top driver is today's {src} ({s['top1_share']:.0%}): model is largely persistence")
+    if kind == "clf":
+        pcols = [f for f in SAME_DAY_PRECIP if f in s["importance"]]
+        src_share = sum(s["importance"][f] for f in pcols) / tot
+        persist = src_share >= PERSIST_CLF_SHARE
+        label = " + ".join(pcols) or src
+    else:
+        src_share = s["importance"].get(src, 0) / tot
+        persist = s["matrix"][0]["feature"] == src
+        label = src
+    if persist:
+        flags.append(f"same-day {label} carries {src_share:.0%} of impact: model leans on persistence")
     flips = sign_flips(s["matrix"])
     if flips:
         flags.append("opposite directions for a feature and its lag (correlated-feature attribution, not independent effects): "
                      + "; ".join(flips[:2]))
+    all_flags = eth_flags + flags
 
-    trust = ("HIGH" if skill_ok and calib_ok and s["bias_ratio"] < 1.5 and cons != "LOW" and not flags
+    # ---- levels that depend on flags
+    stake = level(s["top5_mass"], 0.6, 0.4) if s["top10_mass"] >= 0.5 else "LOW"
+    capped = persist and stake == "HIGH"
+    if capped:
+        stake = "MEDIUM"
+    trust = ("HIGH" if skill_ok and calib_ok and s["bias_ratio"] < 1.5 and cons != "LOW" and not all_flags
              else "MEDIUM" if skill_ok else "LOW")
     # licences are unverified (README), so ethics can never be HIGH
-    ethics = "MEDIUM" if len(flags) <= 2 else "LOW"
+    ethics = "MEDIUM" if len(eth_flags) <= 1 else "LOW"
 
     perf = (f"BSS {m['bss']:.2f} (vs smoothed climatology), AUC {m['auc']:.2f}, ECE {m['ece']:.3f}" if kind == "clf"
             else f"R2 {m['r2']:.2f}, skill vs persistence {m.get('skill_vs_persistence', float('nan')):.2f}")
@@ -70,12 +85,13 @@ def per_target(name):
                     f"{l['coherent_cases']}/{l['n_cases']} coherent cases, rank corr {'n/a' if rc is None else f'{rc:.2f}'}",
         interpretability=f"top-5 features hold {s['top5_mass']:.0%} of impact, top-10 {s['top10_mass']:.0%}; {m['n_features']} features in total",
         trustworthiness=f"{perf}; max/min municipal error ratio {s['bias_ratio']:.2f}",
-        stakeholder=f"top-5 mass {s['top5_mass']:.0%}, top-10 mass {s['top10_mass']:.0%} of {m['n_features']} features",
-        ethics=("; ".join(flags) if flags else "no automatic flags")
+        stakeholder=f"top-5 mass {s['top5_mass']:.0%}, top-10 mass {s['top10_mass']:.0%} of {m['n_features']} features"
+                    + ("; capped at MEDIUM: persistence flag raised" if capped else ""),
+        ethics=("; ".join(eth_flags) if eth_flags else "no bias/proxy flags")
                + "; municipal-scale data (no personal data); scope limited to h=1, 11 municipalities; "
                  "source licences unverified (caps rating at MEDIUM)")
     return dict(levels=dict(transparency=transp, consistency=cons, interpretability=interp, trustworthiness=trust,
-                            stakeholder=stake, ethics=ethics), evidence=ev, flags=flags, s=s, l=l, m=m)
+                            stakeholder=stake, ethics=ethics), evidence=ev, flags=all_flags, s=s, l=l, m=m)
 
 
 def main():
