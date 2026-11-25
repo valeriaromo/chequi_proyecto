@@ -443,6 +443,74 @@ Lluvia, clasificador multitask: ROC AUC 0.839, ECE 0.037, umbral ajustado 0.37, 
 
 Cerrada la línea de DL, la explicabilidad se aplica a los modelos XGBoost congelados (TreeSHAP, permutation importance por grupo de features y estabilidad entre los 4 folds) en un subdirectorio `pipeline/xai/`. Reabrir DL solo si cambian los datos (más años o fuentes) y el gate vuelve a evaluarse con las mismas reglas.
 
+## exp_ai: Explainability of the frozen XGBoost pilot
+
+### Purpose
+`exp_ai` explains the XGBoost models that passed the `dl_validation` gate (no deep-learning model beat them) and judges how far they can be trusted. It covers two targets at h=1 day over 11 municipalities: **rain_occ** (rain ≥ 1 mm tomorrow, classifier) and **t2m_min** (tomorrow's minimum temperature, regressor). It explains a **single fold**: test year 2025, train on years < 2025 with an H-day purge so no training target overlaps the test year. `dl_validation`'s conclusions rest on four folds, so this report does not replace that evidence.
+
+### Architecture
+Pipeline run by `run.py`: `train → shap_analysis → lime_analysis → assess → report`.
+
+| Stage | Script | Role |
+|---|---|---|
+| Config | `cfg.py` | Paths, horizon, seed, test year, targets, base hyper-parameters, tuning grid |
+| Shared | `common.py` | JSON I/O, figure saving, dashboard registration, prediction, `md_table`, representative/critical case selector |
+| Data | `data.py` | Builds shifted targets per municipality, engineered features, numeric feature selection, purged split |
+| 1 | `train.py` | Walk-forward tuning (CV years 2023-2024), fits one model per target, writes `metrics.json` |
+| 2 | `shap_analysis.py` | Global importance, half-year stability, per-municipality error and bias ratio, beeswarm/bar/waterfall/force plots, `shap_*.json` |
+| 3 | `lime_analysis.py` | Explains the same selected cases on train-median-imputed data, measures top-5 overlap and sign agreement with SHAP, `lime_*.json` |
+| 4 | `assess.py` | Converts the evidence into six qualitative levels, collects risk flags, writes `assessment.json` |
+| 5 | `report.py` | Renders everything into `outputs/exp_ai.md` |
+
+### Logic
+**Features.** Beyond the master-table columns, `data.py` adds domain-wide same-day precipitation (mean and wet fraction across municipalities), 1-day changes in pressure, humidity and `T2M_MIN`, a 3-day `T2M_MIN` trend, `T2M_MIN` anomaly vs its 30-day mean, and dewpoint / dewpoint depression. All use information up to day t only.
+
+**Training.** Hyper-parameters (depth, min child weight, learning rate / trees) are chosen by walk-forward validation on 2023 and 2024 (Brier for rain, MAE for temperature). 2025 is never used for tuning. Rain skill is the Brier Skill Score against a smoothed per-municipality climatology. Temperature skill is measured against a persistence baseline (today's `T2M_MIN`).
+
+**Cases explained.** SHAP and LIME explain the same cases: two typical days (25th/75th percentile of prediction) plus critical ones. These are the most uncertain, missed event and false alarm for rain, and the largest over- and under-estimate for temperature.
+
+**Assessment (`assess.py`).** Six criteria per target, each HIGH / MEDIUM / LOW:
+
+| Criterion | Based on |
+|---|---|
+| Transparency | SHAP additivity error < 1e-3 and half-year ranking stability ρ ≥ 0.8 |
+| Consistency | min(SHAP-LIME top-5 overlap, sign agreement) ≥ 0.6 with stability ≥ 0.8 |
+| Interpretability | Share of impact held by the top-5 features (≥ 50% HIGH, ≥ 30% MEDIUM) |
+| Trustworthiness | Skill > 0, calibration (ECE ≤ 0.05), municipal error ratio < 1.5, no flags |
+| Stakeholder Readiness | Top-5 / top-10 concentration; **capped at MEDIUM when the persistence flag is raised** |
+| Ethical Considerations | Only bias/proxy issues: static `geom_`/`elev`/`dist_` features, municipal error ratio ≥ 1.5, plus licence and scope limits. Never HIGH because source licences are unverified |
+
+Model-quality weaknesses (single-driver dependence, miscalibration, SHAP/LIME disagreement, persistence, feature/lag sign flips) are **not** ethics items. They appear as Step 6 risks and lower Trustworthiness. Persistence is flagged for the regressor when the top driver is today's `T2M_MIN`, and for the classifier when same-day precipitation features carry ≥ 10% of total impact. The Step 8 recommendation comes from the mean level score (HIGH = 2, MEDIUM = 1, LOW = 0): ≥ 1.5 with no LOW → "EXPLAINABLE AND READY", ≥ 0.75 → "PARTIALLY EXPLAINABLE", otherwise "ADDITIONAL EXPLAINABILITY REQUIRED".
+
+### Results (test year 2025)
+| Target | Skill | Notes |
+|---|---|---|
+| rain_occ | AUC 0.892, Brier 0.096, **BSS 0.258**, ECE 0.033 | Tuned: depth 3, lr 0.05, 400 trees; 76 features |
+| t2m_min | MAE 0.989 °C, R² 0.854, **skill vs persistence 0.212** | Tuned: depth 3, lr 0.03, 600 trees; 76 features |
+
+| Criterion | rain_occ | t2m_min |
+|---|---|---|
+| Transparency | HIGH | HIGH |
+| Consistency | HIGH | HIGH |
+| Interpretability | MEDIUM | HIGH |
+| Trustworthiness | MEDIUM | MEDIUM |
+| Stakeholder Readiness | LOW | MEDIUM (capped) |
+| Ethical Considerations | MEDIUM | MEDIUM |
+
+**Recommendation: PARTIALLY EXPLAINABLE** (mean score 1.33 / 2).
+
+**Main findings**
+- **Rain** is driven by same-day, domain-wide precipitation (`dom_prectot_mean` 13%, `dom_precip_mean` 7%), dewpoint (7%) and radiation. Impact is spread over many features (top-5 hold only 37%), hence the LOW stakeholder rating. Rain is largely a nowcast of today's weather. Its failures are cases where the two precipitation sources (NASA POWER vs CHIRPS) disagree, and dry-season events the model misses.
+- **t2m_min** leans on today's `T2M_MIN` (27%), `T2M` and dewpoint, which is the persistence flag. Skill beyond persistence is real but modest (0.21). Its largest errors occur on clear, dry nights.
+- **SHAP and LIME agree** (top-5 overlap 64-80%, sign agreement 100%, all selected cases coherent), and municipal error is balanced (max/min ratio 1.24 rain, 1.07 temperature), so no bias flag fires.
+- **Correlated features** (e.g. `ALLSKY_SFC_SW_DWN` vs its lag) show opposite directions. Read SHAP directions as attributions among correlated variables, not isolated causal effects.
+
+### Limitations
+- Single fold: one test year, so the results do not show stability across years.
+- Source licences are unverified, which caps ethics at MEDIUM.
+- The `dl_validation` gate numbers refer to the earlier pilot features and parameters and were not re-run.
+- Scope: h=1 day, 11 municipalities, municipal-scale data (no personal data).
+
 ## Pendientes y límites conocidos
 Definir quién re-entrena, monitorea y retira el modelo.
 Falta probar que la construcción de targets no tenga fuga; la prueba actual solo cubre features.
